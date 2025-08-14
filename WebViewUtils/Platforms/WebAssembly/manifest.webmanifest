@@ -1,0 +1,10 @@
+{
+  "background_color": "#ffffff",
+  "description": "WebViewUtils",
+  "display": "standalone",
+  "name": "WebViewUtils",
+  "short_name": "WebViewUtils",
+  "start_url": "/index.html",
+  "theme_color": "#ffffff",
+  "scope": "/"
+}
