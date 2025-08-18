@@ -6,6 +6,7 @@ using HtmlAgilityPack;
 using Microsoft.Web.WebView2.Core;
 using P42.Uno.HtmlExtensions;
 using Uno.UI.Extensions;
+using Uno.UI.RemoteControl.Messaging.IdeChannel;
 using Windows.Storage.Pickers;
 using Windows.Storage.Pickers.Provider;
 using static System.Runtime.InteropServices.JavaScript.JSType;
@@ -91,68 +92,23 @@ public sealed partial class MainPage : Page
     private async void OnHtmlPrintButtonClick(object sender, RoutedEventArgs e)
     {
         var html = await WebViewExtensions.ReadResourceAsTextAsync("WebViewUtils.Resources.Html5TestPage.html");
-        await WebViewExtensions.PrintAsync(XamlRoot ?? throw new Exception("XamlRoot has not be initiated"), html);
+        await WebViewExtensions.PrintAsync(this, html);
     }
 
     private async void OnWebViewPdfButtonClick(object sender, RoutedEventArgs e)
     {
+        // options is broken in WASM
         var options = new PdfOptions(new Thickness(20), Unit: PdfUnits.In, Format: PdfPageSize.Letter, Scale: 4);
-        var results = await _webView.GeneratePdfAsync(options);
-        await PresentResultsAsync(results);
+        await _webView.SavePdfAsync(options);
     }
 
     async void OnHtmlPdfButtonClick(object sender, RoutedEventArgs e)
     {
         var html = await WebViewExtensions.ReadResourceAsTextAsync("WebViewUtils.Resources.Html5TestPage.html");
-        var results = await WebViewExtensions.GeneratePdfAsync(XamlRoot ?? throw new Exception("XamlRoot has not be initiated"), html);
-        await PresentResultsAsync(results);
+        await WebViewExtensions.SavePdfAsync(this, html);
     }
 
-    async Task PresentResultsAsync((byte[]? pdf, string error) results)
-    {
-        if (results.error == "cancelled")
-            return;
 
-        if (!string.IsNullOrWhiteSpace(results.error))
-        {
-            var dialog = new ContentDialog
-            {
-                Title = "Error Generating Pdf",
-                Content = results.error,
-                CloseButtonText = "OK",
-                XamlRoot = this.XamlRoot
-            };
-            await dialog.ShowAsync();
-            return;
-        }
-
-        var picker = new FileSavePicker
-        {
-            SuggestedStartLocation = PickerLocationId.Downloads,
-            SuggestedFileName = "document.pdf"
-        };
-        picker.FileTypeChoices.Add("PDF", new List<string>() { ".pdf" });
-
-
-#if WINDOWS
-        // Get the current window's HWND by passing a Window object
-        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(((App)App.Current).MainWindow);
-        // Associate the HWND with the file picker
-        WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
-#endif
-
-        StorageFile saveFile = await picker.PickSaveFileAsync();
-        if (saveFile != null)
-        {
-            CachedFileManager.DeferUpdates(saveFile);
-
-            // Save file was picked, you can now write in it
-            await FileIO.WriteBytesAsync(saveFile, results.pdf);
-
-            await CachedFileManager.CompleteUpdatesAsync(saveFile);
-
-        }
-    }
 
     async void OnButtonClickText(object sender, RoutedEventArgs e)
     {

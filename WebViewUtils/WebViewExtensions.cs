@@ -14,7 +14,10 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.Web.WebView2.Core;
 using Uno.UI.Extensions;
+using Uno.UI.RemoteControl.Messaging.IdeChannel;
 using WebViewUtils;
+using Windows.Storage.Pickers;
+using Windows.UI.WebUI;
 
 
 
@@ -55,6 +58,97 @@ public static partial class WebViewExtensions
         await webView2.WaitForVariableValue("document.readyState", "complete", token);
     }
 
+    public static async Task PrintAsync(UIElement element, string html, CancellationTokenSource? cts = null)
+    {
+        if (element?.XamlRoot is null)
+            throw new ArgumentNullException($"{nameof(element)}.{nameof(element.XamlRoot)}");
+
+        static async Task function(WebView2 webView, CancellationToken token)
+        {
+            await webView.PrintAsync(token);
+        }
+
+        var processor = new AuxiliaryWebViewAsyncProcessor(element.XamlRoot, html, cts);
+        await processor.ProcessAsync(function);
+    }
+
+    public static async Task SavePdfAsync(UIElement element, string html, PdfOptions? options = null, CancellationTokenSource? cts = null)
+    {
+        if (element?.XamlRoot is null)
+            throw new ArgumentNullException($"{nameof(element)}.{nameof(element.XamlRoot)}");
+
+        var pdfTask = WebViewExtensions.GeneratePdfAsync(element, html);
+        await SavePdfAsync(element, pdfTask, options, cts);
+    }
+
+    public static async Task SavePdfAsync(this WebView2 webView, PdfOptions? options = null, CancellationTokenSource? cts = null)
+    {
+        var pdfTask = webView.GeneratePdfAsync(options);
+        await SavePdfAsync(webView, pdfTask, options, cts);
+    }
+
+    public static async Task SavePdfAsync(UIElement element, Task<(byte[]? pdf, string error)> pdfTask, PdfOptions? options = null, CancellationTokenSource? cts = null)
+    {
+        if (element?.XamlRoot is null)
+            throw new ArgumentNullException($"{nameof(element)}.{nameof(element.XamlRoot)}");
+
+        var fileTask = RequestStorageFileAsync("PDF", "pdf");
+        await Task.WhenAll(fileTask, pdfTask);
+
+        if (fileTask.Result is not StorageFile saveFile)
+            return;
+
+        if (!string.IsNullOrWhiteSpace(pdfTask.Result.error))
+        {
+            var cd = new ContentDialog()
+            {
+                XamlRoot = element.XamlRoot,
+                Title = "PDF Generation Error",
+                Content = pdfTask.Result.error,
+                PrimaryButtonText = "OK",
+            };
+            await cd.ShowAsync();
+            return;
+        }
+
+        if (pdfTask.Result.pdf is null || pdfTask.Result.pdf.Length == 0)
+        {
+            var cd = new ContentDialog()
+            {
+                XamlRoot = element.XamlRoot,
+                Title = "PDF Generation Error",
+                Content = "Unknown failure",
+                PrimaryButtonText = "OK",
+            };
+            await cd.ShowAsync();
+            return;
+        }
+
+        CachedFileManager.DeferUpdates(saveFile);
+
+        // Save file was picked, you can now write in it
+        await FileIO.WriteBytesAsync(saveFile, pdfTask.Result.pdf);
+
+        await CachedFileManager.CompleteUpdatesAsync(saveFile);
+
+    }
+
+
+    public static async Task<(byte[]? pdf, string error)> GeneratePdfAsync(this UIElement element, string html, PdfOptions? options = null, CancellationTokenSource? cts = null)
+    {
+        if (element?.XamlRoot is null)
+            throw new ArgumentNullException($"{nameof(element)}.{nameof(element.XamlRoot)}");
+
+        async Task<(byte[]?, string)> function(WebView2 webView, CancellationToken token)
+        {
+            var result = await webView.GeneratePdfAsync(options, token);
+            return result;
+        }
+
+        var processor = new AuxiliaryWebViewAsyncProcessor<(byte[]? pdf, string error)>(element.XamlRoot, html, cts);
+        return await processor.ProcessAsync(function);
+    }
+
     public static async Task PrintAsync(this WebView2 webView2, CancellationToken? cancellationToken = null)
     {
         var token = cancellationToken ?? CancellationToken.None;
@@ -73,83 +167,6 @@ public static partial class WebViewExtensions
             };
             await cd.ShowAsync();
         }
-    }
-
-
-    public static async Task PrintAsync(XamlRoot xamlRoot, string html, CancellationTokenSource? cts = null)
-    {
-
-        Func<WebView2, CancellationToken, Task> function = async (WebView2 webView, CancellationToken token) =>
-        {
-            await webView.PrintAsync(token);
-        };
-
-        var processor = new AuxiliaryWebViewAsyncProcessor(xamlRoot, html, cts);
-        await processor.ProcessAsync(function);
-    }
-
-    public static async Task<(byte[]? pdf, string error)> GeneratePdfAsync(XamlRoot xamlRoot, string html, PdfOptions? options = null, CancellationTokenSource? cts = null)
-    {
-        Func<WebView2, CancellationToken, Task<(byte[]?,string)>> function = async (WebView2 webView, CancellationToken token) =>
-        {
-            var result = await webView.GeneratePdfAsync(options, token);
-            return result;
-        };
-
-        var processor = new AuxiliaryWebViewAsyncProcessor<(byte[]? pdf, string error)>(xamlRoot, html, cts);
-        var result = await processor.ProcessAsync(function);
-        return result;
-    }
-
-    public static async Task<(byte[]? pdf, string error)> GeneratePdfAsyncOld(XamlRoot xamlRoot, string html, PdfOptions? options = null, CancellationTokenSource? cts = null)
-    {
-        cts ??= new CancellationTokenSource();
-
-        var tmpWebView = new WebView2
-        {
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            VerticalAlignment = VerticalAlignment.Stretch,
-            Opacity = 0.01
-        };
-
-        var cd = new ContentDialog
-        {
-            Content = new Grid()
-                .Children
-                (
-                    tmpWebView,
-                    new Rectangle()
-                        .Name(out var rectangle)
-                        .HorizontalAlignment(HorizontalAlignment.Stretch)
-                        .VerticalAlignment(VerticalAlignment.Stretch)
-                        .Fill((Brush)Application.Current.Resources["ContentDialogBackground"]),
-                    new ProgressRing()
-                        .IsActive(true),
-                    new Button()
-                        .Margin(5)
-                        .Name(out var cancelButton)
-                        .Content("CANCEL")
-                        .HorizontalAlignment (HorizontalAlignment.Center)
-                        .VerticalAlignment(VerticalAlignment.Bottom)
-
-                ),
-            XamlRoot = xamlRoot,
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            VerticalAlignment = VerticalAlignment.Stretch,
-            Margin = new Thickness(0),
-            Padding = new Thickness(0),
-        };
-
-        cd.Resources["ContentDialogPadding"] = new Thickness(0);
-
-        cancelButton.Click += (s, e) => cts.Cancel(true);
-
-        var tcs = new TaskCompletionSource<(byte[]? pdf, string error)>();
-        var handler = new PdfDialogLoadedHandler(tmpWebView, html, options, tcs, cts.Token);
-        cd.Loaded += handler.OnLoaded;
-
-        await cd.ShowAsync();
-        return await tcs.Task;
     }
 
     public static async Task<(byte[]? pdf, string error)> GeneratePdfAsync(this WebView2 webView2, PdfOptions? options = null, CancellationToken? cancellationToken = null)
@@ -172,15 +189,16 @@ public static partial class WebViewExtensions
         {
             error = await webView2.CoreWebView2.ExecuteScriptAsync("window.p42_makeP42_error").AsTask(token) ?? "";
             System.Diagnostics.Debug.WriteLine($"error:[{error}]");
-            error = error.Trim('"');
+            Console.WriteLine($"error:[{error}]");
+            error = error.Trim('"').Trim('"');
             if (error == "null")
                 error = string.Empty;
             if (!string.IsNullOrEmpty(error))
                 return (null, error);
 
             result = await webView2.CoreWebView2.ExecuteScriptAsync("window.p42_makePdf_result").AsTask(token) ?? "";
-            System.Diagnostics.Debug.WriteLine($"result:[{result}]");
-            result = result.Trim('"');
+            result = result.Trim('"').Trim('"');
+            Console.WriteLine($"result: [{result}]");
             if (result == "null")
                 result = string.Empty;
             else if (!string.IsNullOrEmpty(result))
@@ -191,6 +209,42 @@ public static partial class WebViewExtensions
 
         var bytes = Convert.FromBase64String(result);
         return (bytes, "");
+    }
+
+    public static async Task<StorageFile> RequestStorageFileAsync(string type, params List<string> suffixes)
+    {
+        var picker = new FileSavePicker
+        {
+            SuggestedStartLocation = PickerLocationId.Downloads,
+        };
+
+        if (suffixes.Count > 0)
+        {
+            for (int i = suffixes.Count - 1; i >= 0; i--)
+            {
+                var suffix = suffixes[i].TrimStart('.');
+
+                if (string.IsNullOrWhiteSpace(suffix))
+                    suffixes.RemoveAt(i);
+                else
+                    suffixes[i] = $".{suffix}";
+            }
+
+            if (suffixes.FirstOrDefault() is string primarySuffix)
+                picker.SuggestedFileName = $"document{primarySuffix}";
+        }
+
+        picker.FileTypeChoices.Add(type, suffixes);
+
+
+#if WINDOWS
+        // Get the current window's HWND by passing a Window object
+        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(((App)App.Current).MainWindow);
+        // Associate the HWND with the file picker
+        WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
+#endif
+
+        return await picker.PickSaveFileAsync();
     }
 
     static async Task WaitForVariableValue(this WebView2 webView2, string variable, string value, CancellationToken? cancellationToken = null)
@@ -224,7 +278,15 @@ public static partial class WebViewExtensions
             return;
 
         var script = await ReadResourceAsTextAsync(resourceId).WaitAsync(token);
-        await webView2.ExecuteScriptAsync(script).AsTask(token);
+        try
+        {
+            var result = await webView2.ExecuteScriptAsync(script).AsTask(token);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"exception: {ex}");
+            System.Diagnostics.Debug.WriteLine($"exception: {ex}");
+        }
 
         if (await webView2.IsFunctionLoadedAsync(functionName).WaitAsync(token))
             return;
@@ -235,9 +297,10 @@ public static partial class WebViewExtensions
     public static async Task<bool> IsFunctionLoadedAsync(this WebView2 webView2, string functionName, CancellationToken? cancellationToken = null)
     {
         var token = cancellationToken ?? CancellationToken.None;
-        var exists = await webView2.ExecuteScriptAsync($"typeof {functionName} === \"function\"").AsTask(token);
-        exists?.Trim('"');
-        return exists == "true";
+
+        var type = await webView2.ExecuteScriptAsync($"typeof {functionName};").AsTask(token);
+        type = type?.Trim('"').Trim('"');
+        return type?.Contains("function") ?? false;
     }
 
     public static async Task<string> ReadResourceAsTextAsync(string resourceId)
@@ -438,35 +501,6 @@ public static partial class WebViewExtensions
 
 }
 
-record PdfDialogLoadedHandler(WebView2 WebView, string Html, PdfOptions? Options, TaskCompletionSource<(byte[]?,string)> TaskCompletionSource, CancellationToken? CancellationToken = null)
-{
-    public async void OnLoaded(object sender, RoutedEventArgs e)
-    {
-        var token = CancellationToken ?? System.Threading.CancellationToken.None;
-
-        try
-        {
-            await Task.WhenAny(WebView.EnsureCoreWebView2Async().AsTask(token));
-            WebView.CoreWebView2.NavigateToString(Html);
-            var result = await WebView.GeneratePdfAsync(Options).WaitAsync(token);
-            TaskCompletionSource.SetResult(result);
-        }
-        catch (Exception ex)
-        {
-            TaskCompletionSource.TrySetException(ex);
-            return;
-        }
-        finally
-        {
-            if (sender is ContentDialog cd)
-            {
-                cd.Hide();
-                cd.Loaded -= this.OnLoaded;
-            }
-        }
-    }
-}
-
 abstract record BaseAuxiliaryWebView
 {
     public XamlRoot XamlRoot { get; init; }
@@ -591,6 +625,7 @@ record AuxiliaryWebViewAsyncProcessor : BaseAuxiliaryWebView
                 throw new ArgumentNullException(nameof(Function));
             await WebView2.EnsureCoreWebView2Async().AsTask(CancellationTokenSource.Token);
 
+            WebView2.CoreWebView2.NavigateToString(Html);
             WebView2.CoreWebView2.NavigateToString(Html);
             await WebView2.WaitForDocumentLoadedAsync();
             if (!HideContent)
