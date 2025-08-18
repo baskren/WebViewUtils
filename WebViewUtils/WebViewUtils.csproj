@@ -1,4 +1,4 @@
-<Project Sdk="Uno.Sdk">
+﻿<Project Sdk="Uno.Sdk">
   <PropertyGroup>
     <TargetFrameworks>net9.0-android;net9.0-ios;net9.0-windows10.0.26100;net9.0-browserwasm;net9.0-desktop</TargetFrameworks>
 
@@ -42,18 +42,34 @@
     </UnoFeatures>
 
     <BuildInParallel>false</BuildInParallel>
+      <AllowUnsafeBlocks Condition="  $(TargetFramework.Contains('wasm'))  ">true</AllowUnsafeBlocks>
+      
 
   </PropertyGroup>
+  <ItemGroup>
+    <None Remove="Platforms\WebAssembly\WasmScripts\P42_JavaScript.js" />
+  </ItemGroup>
 
   <ItemGroup>
-    <Folder Include="WebContent" />
-    <BundleResource Include="WebContent/CltInstall.html">
-      <Link>Platforms/iOS/Resources/WebContent/CltInstall.html</Link>
+    <BundleResource Include="WebContent/**/*.*">
+      <Link>Platforms/iOS/Resources/WebContent/%(RecursiveDir)%(Filename)%(Extension)</Link>
     </BundleResource>
-    <AndroidAsset Include="WebContent/CltInstall.html">
-        <Link>Platforms/Android/Assets/WebContent/CltInstall.html</Link>
+      
+    <AndroidAsset Include="WebContent/**/*.*">
+        <Link>Platforms/Android/Assets/WebContent/%(RecursiveDir)%(Filename)%(Extension)</Link>
     </AndroidAsset>
 
+    <Content Condition=" $(TargetFramework.Contains('windows'))  OR  $(TargetFramework.Contains('desktop'))   OR  $(TargetFramework.Contains('wasm')) " Include="WebContent/**/*.*" />
+
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Platforms\WebAssembly\WasmScripts\P42_JavaScript.js" />
+    <EmbeddedResource Include="Resources/**/*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="HtmlAgilityPack" />
   </ItemGroup>
 
 </Project>
