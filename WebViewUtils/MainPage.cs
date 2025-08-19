@@ -1,15 +1,11 @@
-using System.Net.Http;
+using System.Diagnostics;
+using System.Reflection;
 using System.Runtime.InteropServices.JavaScript;
-using System.Text.Json;
-using System.Threading.Tasks;
+using System.Text;
 using HtmlAgilityPack;
 using Microsoft.Web.WebView2.Core;
-using P42.Uno.HtmlExtensions;
-using Uno.UI.Extensions;
-using Uno.UI.RemoteControl.Messaging.IdeChannel;
+using P42.Uno;
 using Windows.Storage.Pickers;
-using Windows.Storage.Pickers.Provider;
-using static System.Runtime.InteropServices.JavaScript.JSType;
 
 #if __IOS__
 using Foundation;
@@ -37,7 +33,7 @@ public sealed partial class MainPage : Page
                             .HorizontalAlignment(HorizontalAlignment.Center)
                             .VerticalAlignment(VerticalAlignment.Center),
                         new WebView2()
-                            .Assign(out _webView)
+                            .Name(out _webView)
                             .DefaultBackgroundColor(Colors.Pink)
                             .HorizontalAlignment(HorizontalAlignment.Stretch)
                             .VerticalAlignment(VerticalAlignment.Stretch),
@@ -86,7 +82,33 @@ public sealed partial class MainPage : Page
 
     private async void OnWebViewPrintButtonClick(object sender, RoutedEventArgs e)
     {
+        await _webView.EnsureCoreWebView2Async();
         await _webView.PrintAsync();
+    }
+
+    public void ShowDescendents(FrameworkElement element)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"[{element.Name}] : {element.GetType()}");
+        ShowDescendents(sb, element, 0);
+        Debug.WriteLine(sb.ToString());
+    }
+
+    public void ShowDescendents(StringBuilder sb, FrameworkElement element, int depth)
+    {
+        var prefix = $"{new string('\t', depth)}";
+        var kids = VisualTreeHelper.GetChildren(element);
+        var last = kids.LastOrDefault();
+        foreach (var child in kids)
+        {
+            sb.Append(prefix);
+            sb.Append(child == last
+                ? "╚═ "
+                : "╠═ ");
+            sb.AppendLine($"[{element.GetType()}] {(child is FrameworkElement fe ? fe.Name : string.Empty)}");
+            if (child is FrameworkElement e)
+                ShowDescendents(sb, e, depth + 1);
+        }
     }
 
     private async void OnHtmlPrintButtonClick(object sender, RoutedEventArgs e)
@@ -110,7 +132,7 @@ public sealed partial class MainPage : Page
 
 
 
-    async void OnButtonClickText(object sender, RoutedEventArgs e)
+    private async void OnButtonClickText(object sender, RoutedEventArgs e)
     {
         //var html = "THIS IS A TEST";
         //HtmlPrint(html);
@@ -118,8 +140,8 @@ public sealed partial class MainPage : Page
         //UriPrint("https://platform.uno");
 
         var tmpWebView = new WebView2 ();
-        var tmpContent = this.Content as UIElement;
-        this.Content = tmpWebView;
+        var tmpContent = Content as UIElement;
+        Content = tmpWebView;
 
         await tmpWebView.EnsureCoreWebView2Async ();
         //tmpWebView.Source = new Uri("https://platform.uno");
@@ -132,7 +154,7 @@ public sealed partial class MainPage : Page
         doc.OptionFixNestedTags = true;
         doc.LoadHtml(html);
 
-        if (doc.DocumentNode.SelectSingleNode("//html") is not HtmlNode htmlNode)
+        if (doc.DocumentNode.SelectSingleNode("//html") is not {} htmlNode)
         {
             htmlNode = doc.CreateElement("html");
             foreach (var child in doc.DocumentNode.ChildNodes)
@@ -141,13 +163,13 @@ public sealed partial class MainPage : Page
             doc.DocumentNode.AppendChild(htmlNode);
         }
 
-        if (htmlNode.SelectSingleNode("head") is not HtmlNode headNode)
+        if (htmlNode.SelectSingleNode("head") is not {} headNode)
         {
             headNode = doc.CreateElement("head");
             htmlNode.PrependChild(headNode);
         }
 
-        if (htmlNode.SelectSingleNode("body") is not HtmlNode bodyNode)
+        if (htmlNode.SelectSingleNode("body") is not {} bodyNode)
         {
             bodyNode = doc.CreateElement("body");
             // Move non-head children into <body>
@@ -182,19 +204,19 @@ public sealed partial class MainPage : Page
         headNode.AppendChild(loadedScriptNode);
         */
 
-        var html2pdfScriptNode = doc.CreateElement("script");
+        var html2PdfScriptNode = doc.CreateElement("script");
 
         var resources = typeof(MainPage).Assembly.GetManifestResourceNames();
         foreach (var resource in resources)
             System.Diagnostics.Debug.WriteLine($" = {resource}");
 
-        using var html2pdfScriptStream = typeof(MainPage).Assembly.GetManifestResourceStream("WebViewUtils.Resources.html2pdf.bundle.min.js") ?? throw new InvalidOperationException("Resource not found");
-        using var reader = new StreamReader(html2pdfScriptStream);
-        var html2pdfScript = reader.ReadToEnd();
+        await using var html2PdfScriptStream = typeof(MainPage).Assembly.GetManifestResourceStream("WebViewUtils.Resources.html2pdf.bundle.min.js") ?? throw new InvalidOperationException("Resource not found");
+        using var reader = new StreamReader(html2PdfScriptStream);
+        var html2PdfScript = await reader.ReadToEndAsync();
         //html2pdfScriptNode.InnerHtml = html2pdfScript; // does not work - truncates script 
-        html2pdfScriptNode.InnerHtml = "[[[REPLACE ME WITH HTML2PDF SCRIPT]]]";  // setting InnerHtml to html2pdfScript seems to truncate the script.
+        html2PdfScriptNode.InnerHtml = "[[[REPLACE ME WITH HTML2PDF SCRIPT]]]";  // setting InnerHtml to html2pdfScript seems to truncate the script.
         //html2pdfScriptNode.SetAttributeValue("src", "https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"); // this WORKS (but not offline)
-        headNode.AppendChild(html2pdfScriptNode);
+        headNode.AppendChild(html2PdfScriptNode);
 
         var makePdfScript = doc.CreateElement("script");
         /*
@@ -214,9 +236,9 @@ public sealed partial class MainPage : Page
         */
 
 
-        using var makePdfScriptStream = typeof(MainPage).Assembly.GetManifestResourceStream("WebViewUtils.Resources.p42_makePdf.js") ?? throw new InvalidOperationException("Resource not found");
+        await using var makePdfScriptStream = typeof(MainPage).Assembly.GetManifestResourceStream("WebViewUtils.Resources.p42_makePdf.js") ?? throw new InvalidOperationException("Resource not found");
         using var reader1 = new StreamReader(makePdfScriptStream);
-        makePdfScript.InnerHtml = reader1.ReadToEnd();
+        makePdfScript.InnerHtml = await reader1.ReadToEndAsync();
         headNode.AppendChild(makePdfScript);
 
         var buttonNode = doc.CreateElement("button");
@@ -230,7 +252,7 @@ public sealed partial class MainPage : Page
         bodyNode.AppendChild(buttonClickScript);
 
         var fixedHtml = doc.DocumentNode.OuterHtml;
-        fixedHtml = fixedHtml.Replace("[[[REPLACE ME WITH HTML2PDF SCRIPT]]]", html2pdfScript);
+        fixedHtml = fixedHtml.Replace("[[[REPLACE ME WITH HTML2PDF SCRIPT]]]", html2PdfScript);
         tmpWebView.NavigateToString(fixedHtml);
         /*
         tmpWebView.CoreWebView2.Settings.IsWebMessageEnabled = true;
@@ -294,25 +316,25 @@ public sealed partial class MainPage : Page
         await tmpWebView.WaitForDocumentLoadedAsync();
         
 
-        string result = "";
-        string error = "";
+        var result = string.Empty;
+        var error = string.Empty;
         await tmpWebView.ExecuteScriptAsync("p42_makePdf()");
         while (string.IsNullOrWhiteSpace(result) && string.IsNullOrWhiteSpace(error))
         {
             error = await tmpWebView.CoreWebView2.ExecuteScriptAsync("window.p42_makeP42_error");
             System.Diagnostics.Debug.WriteLine($"error:[{error}]");
-            error = error.Trim('"');
+            error = error?.Trim('"');
             if (error == "null")
                 error = "";
             if (!string.IsNullOrEmpty(error))
             {
-                this.Content = tmpContent;
+                Content = tmpContent;
                 throw new Exception(error);
             }
 
             result = await tmpWebView.CoreWebView2.ExecuteScriptAsync("window.p42_makePdf_result");
             System.Diagnostics.Debug.WriteLine($"result:[{result}]");
-            result = result.Trim('"');
+            result = result?.Trim('"');
             if (result == "null")
                 result = "";
 
@@ -320,8 +342,6 @@ public sealed partial class MainPage : Page
         }
 
         var bytes = Convert.FromBase64String(result);
-        //System.Diagnostics.Debug.WriteLine(result);  // Outputs: Finished!
-        //Console.WriteLine(result);  // Outputs: Finished!
 
         var picker = new FileSavePicker();
         picker.SuggestedStartLocation = PickerLocationId.Downloads;
@@ -350,14 +370,14 @@ public sealed partial class MainPage : Page
 
         //await tmpWebView.ExecuteScriptAsync("print();");
 
-        this.Content = tmpContent;
+        Content = tmpContent;
         
 
     }
 
     private void OnCoreWebView2_WebMessageReceived(CoreWebView2 sender, CoreWebView2WebMessageReceivedEventArgs args)
     {
-        if (args.TryGetWebMessageAsString() is  string text && !string.IsNullOrWhiteSpace(text)) 
+        if (args.TryGetWebMessageAsString() is { } text && !string.IsNullOrWhiteSpace(text)) 
             _webView.CoreWebView2.NavigateToString(text);
     }
     /*
@@ -391,11 +411,10 @@ public sealed partial class MainPage : Page
 
 #if BROWSERWASM
         var page = $"/{GetBootstrapBase()}/WebContent/CltInstall.html";
-        //var pageUrl = $"{GetPageUrl()}{page}";
-        Console.WriteLine($"FramePage: [{page}]");
-        System.Diagnostics.Debug.WriteLine($"FramePage: [{page}]");
+        var msg = $"FramePage: [{page}]";
+        Console.WriteLine(msg);
+        System.Diagnostics.Debug.WriteLine(msg);
         _webView.CoreWebView2.Navigate(page);
-        //_webView.Source = new Uri( pageUrl );
         return;
 #endif
 
