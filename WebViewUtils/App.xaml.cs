@@ -13,6 +13,7 @@ public partial class App : Application
     public App()
     {
         this.InitializeComponent();
+        
     }
 
     public Window? MainWindow { get; private set; }

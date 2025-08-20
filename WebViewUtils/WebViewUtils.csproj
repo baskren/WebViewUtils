@@ -37,13 +37,17 @@
       Lottie;
       Toolkit;
       ThemeService;
-      SkiaRenderer;
       WebView;
+    </UnoFeatures>
+
+    <UnoFeatures Condition=" !$(TargetFramework.Contains('ios')) " >
+        $(UnoFeatures);
+        SkiaRenderer;
     </UnoFeatures>
 
     <BuildInParallel>false</BuildInParallel>
       <AllowUnsafeBlocks Condition="  $(TargetFramework.Contains('wasm'))  ">true</AllowUnsafeBlocks>
-      
+
 
   </PropertyGroup>
   <ItemGroup>
@@ -54,7 +58,7 @@
     <BundleResource Include="WebContent/**/*.*">
       <Link>Platforms/iOS/Resources/WebContent/%(RecursiveDir)%(Filename)%(Extension)</Link>
     </BundleResource>
-      
+
     <AndroidAsset Include="WebContent/**/*.*">
         <Link>Platforms/Android/Assets/WebContent/%(RecursiveDir)%(Filename)%(Extension)</Link>
     </AndroidAsset>

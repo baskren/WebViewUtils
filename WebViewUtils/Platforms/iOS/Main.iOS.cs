@@ -15,6 +15,14 @@ public class EntryPoint
             .UseAppleUIKit()
             .Build();
 
-        host.Run();
+        try
+        {
+            host.Run();
+        }
+        catch (Exception e)
+        {
+            Console.WriteLine(e);
+            throw;
+        }
     }
 }

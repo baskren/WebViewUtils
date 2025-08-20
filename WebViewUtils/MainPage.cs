@@ -6,6 +6,7 @@ using HtmlAgilityPack;
 using Microsoft.Web.WebView2.Core;
 using P42.Uno;
 using Windows.Storage.Pickers;
+using Microsoft.UI.Dispatching;
 
 #if __IOS__
 using Foundation;
@@ -15,7 +16,8 @@ namespace WebViewUtils;
 public sealed partial class MainPage : Page
 {
     WebView2 _webView;
-    
+    public static DispatcherQueue MainThreadDispatchQueue { get; private set; }
+
     public MainPage()
     {
         this
@@ -26,6 +28,7 @@ public sealed partial class MainPage : Page
                 new Grid()
                     .VerticalAlignment(VerticalAlignment.Stretch)
                     .HorizontalAlignment(HorizontalAlignment.Stretch)
+                    .RowDefinitions("*,50")
                     .Children
                     (
                         new TextBlock()
@@ -38,6 +41,7 @@ public sealed partial class MainPage : Page
                             .HorizontalAlignment(HorizontalAlignment.Stretch)
                             .VerticalAlignment(VerticalAlignment.Stretch),
                         new StackPanel()
+                            .Grid(row:1)
                             .Orientation(Orientation.Horizontal)
                             .HorizontalAlignment(HorizontalAlignment.Stretch)
                             .VerticalAlignment(VerticalAlignment.Center)
@@ -78,6 +82,7 @@ public sealed partial class MainPage : Page
 
         Loaded += OnLoaded;
 
+        MainThreadDispatchQueue = DispatcherQueue.GetForCurrentThread();
     }
 
     private async void OnWebViewPrintButtonClick(object sender, RoutedEventArgs e)
@@ -356,7 +361,7 @@ public sealed partial class MainPage : Page
         WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
 #endif
 
-        StorageFile saveFile = await picker.PickSaveFileAsync();
+        var saveFile = await picker.PickSaveFileAsync();
         if (saveFile != null)
         {
             CachedFileManager.DeferUpdates(saveFile);
@@ -426,6 +431,9 @@ public sealed partial class MainPage : Page
         );
 
         _webView.CoreWebView2.Navigate("http://WebContent/CltInstall.html");
+        
+        //var html = await WebViewExtensions.ReadResourceAsTextAsync("WebViewUtils.Resources.Html5TestPage.html");
+        //_webView.CoreWebView2.NavigateToString(html);
         
 #if __IOS__
         

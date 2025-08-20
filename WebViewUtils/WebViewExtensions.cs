@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Numerics;
 using System.Reflection;
 using System.Text.Json;
 using Uno.UI.Extensions;
@@ -21,6 +22,14 @@ public static class WebViewExtensions
 
     public static async Task WaitForDocumentLoadedAsync(this WebView2 webView2, CancellationToken token = default)
         => await webView2.WaitForVariableValue("document.readyState", "complete", token);
+
+    private static async Task<object?> GetNativeWebViewWrapper(this WebView2 webView2)
+    {
+        if (typeof(CoreWebView2).GetField("_nativeWebView", BindingFlags.Instance | BindingFlags.NonPublic) is not {} nativeWebViewField)
+            throw new Exception("Unable to obtain _nativeWebView field information");
+        var nativeWebView = nativeWebViewField.GetValue(webView2.CoreWebView2);
+        return nativeWebView ?? throw new Exception("Unable to obtain native webview");
+    }
     
     public static async Task PrintAsync(this WebView2 webView2, CancellationToken token = default)
     {
@@ -28,20 +37,25 @@ public static class WebViewExtensions
         {
             await webView2.WaitForDocumentLoadedAsync(token);
 #if __ANDROID__
-            if (typeof(CoreWebView2).GetField("_nativeWebView", BindingFlags.Instance | BindingFlags.NonPublic) is not {} nativeWebViewField)
-                throw new Exception("Unable to obtain _nativeWebView field information");
-            var nativeWebView = nativeWebViewField.GetValue(webView2.CoreWebView2);
-            if (nativeWebView is null)
-                throw new Exception("Unable to obtain native webview");
-            
-            var type = nativeWebView.GetType();
-            if (type.GetProperty("WebView", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)
-                    ?.GetValue(nativeWebView) is not Android.Webkit.WebView droidWebView)
-                throw new Exception("Unable to obtain native webview");
-            
+            var nativeWebViewWrapper = await webView2.GetNativeWebViewWrapper();
+            var type = nativeWebViewWrapper.GetType();
+            if (type.GetProperty
+            (
+                "WebView", 
+                BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public
+            )
+            ?.GetValue(nativeWebViewWrapper) is not Android.Webkit.WebView droidWebView)
+            throw new Exception("Unable to obtain native webview");
+
             await droidWebView.PrintAsync(cancellationToken: token);
+#elif __IOS__
+            var nativeWebViewWrapper = await webView2.GetNativeWebViewWrapper();
+            if (nativeWebViewWrapper is not WebKit.WKWebView wkWebView)
+                throw new Exception("Unable to obtain native webview");
+
+            var result = await wkWebView.PrintAsync();
 #else
-            await webView2.ExecuteScriptAsync("print();").AsTask(token);
+            await webView2.ExecuteScriptAsync("window.print();").AsTask(token);
 #endif
         }
         catch (Exception ex)
@@ -61,12 +75,15 @@ public static class WebViewExtensions
         if (element.XamlRoot is null)
             throw new ArgumentNullException($"{nameof(element)}.{nameof(element.XamlRoot)}");
         
-        var processor = new AuxiliaryWebViewAsyncProcessor(element.XamlRoot, html, token);
+        var processor = new AuxiliaryWebViewAsyncProcessor<bool>(element.XamlRoot, html, token);
         await processor.ProcessAsync(PrintFunction);
         return;
 
-        static async Task PrintFunction(WebView2 webView, CancellationToken localToken)
-            => await webView.PrintAsync(localToken);
+        static async Task<bool> PrintFunction(WebView2 webView, CancellationToken localToken)
+        {
+            await webView.PrintAsync(localToken);
+            return true;
+        }
     }
     
     public static async Task SavePdfAsync(UIElement element, string html, PdfOptions? options = null, CancellationToken token = default)
@@ -89,7 +106,7 @@ public static class WebViewExtensions
         if (element.XamlRoot is null)
             throw new ArgumentNullException($"{nameof(element)}.{nameof(element.XamlRoot)}");
 
-        var fileTask = RequestStorageFileAsync("PDF", "pdf");
+        var fileTask = RequestStorageFileAsync( element.XamlRoot, "PDF", "pdf");
         await Task.WhenAll(fileTask, pdfTask);
 
         if (fileTask.Result is not { } saveFile)
@@ -172,9 +189,13 @@ public static class WebViewExtensions
         return (bytes, "");
     }
 
-    public static async Task<StorageFile?> RequestStorageFileAsync(string type, params List<string> suffixes)
+    public static async Task<StorageFile?> RequestStorageFileAsync(XamlRoot xamlRoot, string type, params List<string> suffixes)
     {
+        #if __IOS__
+        var picker = new CustomFileSavePicker(xamlRoot)
+        #else
         var picker = new FileSavePicker
+        #endif
         {
             SuggestedStartLocation = PickerLocationId.Downloads
         };
@@ -203,7 +224,9 @@ public static class WebViewExtensions
         WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
 #endif
 
+        
         return await picker.PickSaveFileAsync();
+        
     }
 
     private static async Task WaitForVariableValue(this WebView2 webView2, string variable, string value, CancellationToken token = default)
@@ -215,8 +238,10 @@ public static class WebViewExtensions
         {
             result = await webView2.CoreWebView2.ExecuteScriptAsync(variable).AsTask(token);
             result = result?.Trim('"');
+
             await Task.Delay(500, token);
         }
+        
     }
 
     private static async Task AssurePdfScriptsAsync(this WebView2 webView2, CancellationToken token = default)
@@ -254,7 +279,24 @@ public static class WebViewExtensions
     }
     
     private record TryResult<T>(bool IsSuccess, T? Value = default);
-    
+
+    private static async Task<TryResult<T>> TryExecuteScriptAsync<T>(this WebView2 webView2, string script) where T : IParsable<T>, ISpanParsable<T>, INumber<T>
+    {
+        try
+        {
+            var result = await webView2.ExecuteScriptAsync(script);
+            if (T.TryParse(result, null, out var v))
+                return new TryResult<T>(true, v);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"WebViewExtensions.TryExecuteIntScriptAsync {ex.GetType()} : {ex.Message} \n{ex.StackTrace} ");
+        }
+
+        return await Task.FromResult(new TryResult<T>(false));
+    }
+
+    /*
     private static async Task<TryResult<int>> TryExecuteIntScriptAsync(this WebView2 webView2, string script)
     {
         try
@@ -277,7 +319,6 @@ public static class WebViewExtensions
         try
         {
             var result = await webView2.ExecuteScriptAsync(script);
-            Debug.WriteLine($"WebViewExtensions.TryExecuteDoubleScriptAsync : [{script}] : [{result}]");
             if (double.TryParse(result, out var v))
                 return new TryResult<double>(true, v);
         }
@@ -288,10 +329,11 @@ public static class WebViewExtensions
 //#endif
         return await Task.FromResult(new TryResult<double>(false));
     }
+    */
 
     private static async Task<double> TryUpdateIfLarger(this WebView2 webView2, string script, double source)
     {
-        if (await webView2.TryExecuteDoubleScriptAsync(script) is { IsSuccess: true } r1 && r1.Value > source)
+        if (await webView2.TryExecuteScriptAsync<double>(script) is { IsSuccess: true } r1 && r1.Value > source)
             return r1.Value;
 
         return source;
@@ -484,55 +526,6 @@ internal abstract record BaseAuxiliaryWebView
 
 }
 
-internal record AuxiliaryWebViewAsyncProcessor : BaseAuxiliaryWebView
-{
-    private Func<WebView2, CancellationToken, Task>? Function;
-
-    public TaskCompletionSource<bool> TaskCompletionSource { get; }
-
-    public AuxiliaryWebViewAsyncProcessor(XamlRoot xamlRoot, string html, CancellationToken cancellationToken = default) : base(xamlRoot, html, cancellationToken)
-    {
-        TaskCompletionSource = new TaskCompletionSource<bool>();
-    }
-
-    public async Task ProcessAsync(Func<WebView2, CancellationToken, Task> function)
-    {
-        ArgumentNullException.ThrowIfNull(function);
-        Function = function;
-        ContentDialog.Loaded += OnLoaded;
-        await ShowAsync();
-        await TaskCompletionSource.Task;
-    }
-
-    public async void OnLoaded(object sender, RoutedEventArgs e)
-    {
-        try
-        {
-            if (Function is null)
-                throw new ArgumentNullException(nameof(Function));
-            await WebView2.EnsureCoreWebView2Async().AsTask(CancellationTokenSource.Token);
-
-            WebView2.CoreWebView2.NavigateToString(Html);
-            WebView2.CoreWebView2.NavigateToString(Html);
-            await WebView2.WaitForDocumentLoadedAsync();
-            if (!HideContent)
-                ProgressRing.Visibility = Visibility.Collapsed;
-
-            await Function(WebView2, CancellationTokenSource.Token);
-            TaskCompletionSource.SetResult(true);
-        }
-        catch (Exception ex)
-        {
-            TaskCompletionSource.TrySetException(ex);
-        }
-        finally
-        {
-            ContentDialog.Hide();
-            ContentDialog.Loaded -= OnLoaded;
-        }
-    }
-}
-
 internal record AuxiliaryWebViewAsyncProcessor<T> : BaseAuxiliaryWebView
 {
     private Func<WebView2, CancellationToken, Task<T>>? _function;
@@ -548,7 +541,8 @@ internal record AuxiliaryWebViewAsyncProcessor<T> : BaseAuxiliaryWebView
     {
         ArgumentNullException.ThrowIfNull(function);
         _function = function;
-        ContentDialog.Loaded += OnLoaded;
+        WebView2.Loaded += OnLoaded;
+        //ContentDialog.Loaded += OnContentDialogLoaded;
         await ShowAsync();
         return await TaskCompletionSource.Task;
     }
