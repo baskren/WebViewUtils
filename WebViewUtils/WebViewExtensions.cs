@@ -2,7 +2,6 @@ using System.Diagnostics;
 using System.Numerics;
 using System.Reflection;
 using System.Text.Json;
-using Uno.UI.Extensions;
 using WebViewUtils;
 using Windows.Storage.Pickers;
 using Microsoft.Web.WebView2.Core;
@@ -23,7 +22,7 @@ public static class WebViewExtensions
     public static async Task WaitForDocumentLoadedAsync(this WebView2 webView2, CancellationToken token = default)
         => await webView2.WaitForVariableValue("document.readyState", "complete", token);
 
-    private static async Task<object?> GetNativeWebViewWrapper(this WebView2 webView2)
+    private static object GetNativeWebViewWrapper(this WebView2 webView2)
     {
         if (typeof(CoreWebView2).GetField("_nativeWebView", BindingFlags.Instance | BindingFlags.NonPublic) is not {} nativeWebViewField)
             throw new Exception("Unable to obtain _nativeWebView field information");
@@ -37,7 +36,7 @@ public static class WebViewExtensions
         {
             await webView2.WaitForDocumentLoadedAsync(token);
 #if __ANDROID__
-            var nativeWebViewWrapper = await webView2.GetNativeWebViewWrapper();
+            var nativeWebViewWrapper = webView2.GetNativeWebViewWrapper();
             var type = nativeWebViewWrapper.GetType();
             if (type.GetProperty
             (
@@ -49,7 +48,7 @@ public static class WebViewExtensions
 
             await droidWebView.PrintAsync(cancellationToken: token);
 #elif __IOS__
-            var nativeWebViewWrapper = await webView2.GetNativeWebViewWrapper();
+            var nativeWebViewWrapper = webView2.GetNativeWebViewWrapper();
             if (nativeWebViewWrapper is not WebKit.WKWebView wkWebView)
                 throw new Exception("Unable to obtain native webview");
 
@@ -75,8 +74,7 @@ public static class WebViewExtensions
         if (element.XamlRoot is null)
             throw new ArgumentNullException($"{nameof(element)}.{nameof(element.XamlRoot)}");
         
-        var processor = new AuxiliaryWebViewAsyncProcessor<bool>(element.XamlRoot, html, token);
-        await processor.ProcessAsync(PrintFunction);
+        await AuxiliaryWebViewAsyncProcessor<bool>.Create(element.XamlRoot, html, PrintFunction, cancellationToken:  token);
         return;
 
         static async Task<bool> PrintFunction(WebView2 webView, CancellationToken localToken)
@@ -122,25 +120,45 @@ public static class WebViewExtensions
                 Title = "PDF Generation Error",
                 Content = string.IsNullOrWhiteSpace(pdfTask.Result.error)
                     ? "Unknown failure"
-                    : pdfTask.Result.error,
+                    : new ScrollViewer() .Content(new TextBlock().Text(pdfTask.Result.error)),
                 PrimaryButtonText = "OK"
             };
             await cd.ShowAsync();
             return;
         }
 
-        CachedFileManager.DeferUpdates(saveFile);
-        await FileIO.WriteBytesAsync(saveFile, pdfTask.Result.pdf);
-        await CachedFileManager.CompleteUpdatesAsync(saveFile);
+        try
+        {
+            CachedFileManager.DeferUpdates(saveFile);
+            await FileIO.WriteBytesAsync(saveFile, pdfTask.Result.pdf);
+            await CachedFileManager.CompleteUpdatesAsync(saveFile);
+        }
+        catch (Exception e)
+        {
+            ContentDialog cd = new ()
+            {
+                XamlRoot = element.XamlRoot,
+                Title = "File Save Error",
+                Content = string.IsNullOrWhiteSpace(e.ToString())
+                    ? "Unknown failure"
+                    : new ScrollViewer().Content(new TextBlock().Text(e.ToString())),
+                PrimaryButtonText = "OK"
+            };
+            await cd.ShowAsync();
+            
+        }
     }
     
     public static async Task<(byte[]? pdf, string error)> GeneratePdfAsync(this UIElement element, string html, PdfOptions? options = null, CancellationToken token = default)
     {
-        if (element.XamlRoot is null)
+        if (element.XamlRoot == null)
             throw new ArgumentNullException($"{nameof(element)}.{nameof(element.XamlRoot)}");
-
-        var processor = new AuxiliaryWebViewAsyncProcessor<(byte[]? pdf, string error)>(element.XamlRoot, html, token);
-        return await processor.ProcessAsync(MakePdfFunction);
+        
+        return await AuxiliaryWebViewAsyncProcessor<(byte[]? pdf, string error)>.Create(
+            element.XamlRoot, 
+            html,
+            MakePdfFunction, 
+            cancellationToken: token);
 
         async Task<(byte[]?, string)> MakePdfFunction(WebView2 webView, CancellationToken localToken)
         {
@@ -296,40 +314,6 @@ public static class WebViewExtensions
         return await Task.FromResult(new TryResult<T>(false));
     }
 
-    /*
-    private static async Task<TryResult<int>> TryExecuteIntScriptAsync(this WebView2 webView2, string script)
-    {
-        try
-        {
-            var result = await webView2.ExecuteScriptAsync(script);
-            if (int.TryParse(result, out var v))
-                return new TryResult<int>(true, v);
-        }
-        catch (Exception ex)
-        {
-            Debug.WriteLine($"WebViewExtensions.TryExecuteIntScriptAsync {ex.GetType()} : {ex.Message} \n{ex.StackTrace} ");
-        }
-
-        return await Task.FromResult(new TryResult<int>(false));
-    }
-
-    private static async Task<TryResult<double>> TryExecuteDoubleScriptAsync(this WebView2 webView2, string script)
-    {
-//#if __WASM__ || !NET7_0_OR_GREATER
-        try
-        {
-            var result = await webView2.ExecuteScriptAsync(script);
-            if (double.TryParse(result, out var v))
-                return new TryResult<double>(true, v);
-        }
-        catch (Exception ex)
-        {
-            Debug.WriteLine($"WebViewExtensions.TryExecuteDoubleScriptAsync {ex.GetType()} : {ex.Message} \n{ex.StackTrace} ");
-        }
-//#endif
-        return await Task.FromResult(new TryResult<double>(false));
-    }
-    */
 
     private static async Task<double> TryUpdateIfLarger(this WebView2 webView2, string script, double source)
     {
@@ -427,150 +411,136 @@ public static class WebViewExtensions
 }
 
 
-internal abstract record BaseAuxiliaryWebView
+internal class AuxiliaryWebViewAsyncProcessor<T> 
 {
-    public XamlRoot XamlRoot { get;  }
-
-    protected CancellationTokenSource CancellationTokenSource { get;}
-
-    protected WebView2 WebView2 { get;  }
-
-    protected ContentDialog ContentDialog { get;  }
-
-    public bool HideContent { get; set; }
-
-    protected string Html { get;  }
-
-    protected ProgressRing ProgressRing { get; }
-
-    protected CancellationToken ParentCancellationToken { get; }
     
-    protected CancellationTokenSource UiCancellationTokenSource { get; }
+    
+    #region  Fields
 
-    protected BaseAuxiliaryWebView(XamlRoot xamlRoot, string html, CancellationToken cancellationTokenSource = default)
+    private readonly TaskCompletionSource<T> _tcs = new();
+    private readonly CancellationToken _cancellationToken;
+
+    private readonly Func<WebView2, CancellationToken, Task<T>> _function;
+    private readonly Func<WebView2, CancellationToken, Task> _loadContentAction;
+    
+    private readonly ContentDialog _contentDialog;
+    private readonly WebView2 _webView2;
+    #endregion
+
+    public static async Task<T> Create(
+        XamlRoot xamlRoot, 
+        string html,
+        Func<WebView2, CancellationToken, Task<T>> onLoadedFunction, 
+        bool showWebContent = false,
+        bool hasCancelButton = true,
+        CancellationToken cancellationToken = default)
     {
-        XamlRoot = xamlRoot;
-        Html = html;
-        UiCancellationTokenSource = new ();
-        ParentCancellationToken = cancellationTokenSource;
-        CancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(UiCancellationTokenSource.Token, ParentCancellationToken);
-
-        WebView2 = new ()
+        if (string.IsNullOrWhiteSpace(html))
+            throw new ArgumentNullException(nameof(html));
+        
+        var processor = new AuxiliaryWebViewAsyncProcessor<T>(xamlRoot, LoadHtml, onLoadedFunction, showWebContent, hasCancelButton, cancellationToken);
+        return await processor.ProcessAsync();
+        
+        Task LoadHtml(WebView2 webView, CancellationToken localToken)
         {
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            VerticalAlignment = VerticalAlignment.Stretch
-        };
+            webView.CoreWebView2.NavigateToString(html);
+            return Task.CompletedTask;
+        }
 
-        ContentDialog = new()
+    }
+    
+    private AuxiliaryWebViewAsyncProcessor(XamlRoot xamlRoot, Func<WebView2, CancellationToken, Task> loadContentAction, Func<WebView2, CancellationToken, Task<T>> contentLoadedFunction, bool showWebContent, bool hasCancelButton, CancellationToken cancellationToken) 
+    {
+        ArgumentNullException.ThrowIfNull(xamlRoot);
+        ArgumentNullException.ThrowIfNull(loadContentAction);
+        ArgumentNullException.ThrowIfNull(contentLoadedFunction);
+
+        CancellationTokenSource uiCancellationTokenSource = new ();
+        _cancellationToken = CancellationTokenSource.CreateLinkedTokenSource(uiCancellationTokenSource.Token, cancellationToken).Token;
+
+        _loadContentAction = loadContentAction;
+        _function = contentLoadedFunction;
+
+        _contentDialog = new ContentDialog
         {            
             XamlRoot = xamlRoot,
             HorizontalAlignment = HorizontalAlignment.Stretch,
             VerticalAlignment = VerticalAlignment.Stretch,
             Margin = new Thickness(0),
-            Padding = new Thickness(0)
+            Padding = new Thickness(0),
+            Content = new Grid()
+                .RowDefinitions("*, Auto")
+                .Children
+                (
+                    new WebView2()
+                        .HorizontalAlignment(HorizontalAlignment.Stretch)
+                        .VerticalAlignment(VerticalAlignment.Stretch)
+                        .Name(out _webView2)
+                        .Opacity(showWebContent ? 1 : 0.01),
+
+                    new Rectangle()
+                        .HorizontalAlignment(HorizontalAlignment.Stretch)
+                        .VerticalAlignment(VerticalAlignment.Stretch)
+                        .Fill((Brush)Application.Current.Resources["ContentDialogBackground"])
+                        .Visibility(showWebContent ? Visibility.Visible : Visibility.Collapsed),
+                
+                    new ProgressRing()
+                        .IsActive(true),
+
+                    new Button()
+                        .Grid(row:1)
+                        .Margin(5)
+                        .Name(out var cancelButton)
+                        .Content("CANCEL")
+                        .HorizontalAlignment(HorizontalAlignment.Center)
+                        .VerticalAlignment(VerticalAlignment.Bottom)
+                        .Visibility(hasCancelButton ? Visibility.Visible : Visibility.Collapsed)
+
+                )
         };
 
 #if WINDOWS
-        if (!HideContent)
+        if (showWebContent)
         {
             ContentDialog.Resources["ContentDialogPadding"] = new Thickness(4);
-            ContentDialog.Resources["ContentDialogMaxWidth"] = XamlRoot.Size.Width * 0.75;
-            ContentDialog.Resources["ContentDialogMaxHeight"] = XamlRoot.Size.Height * 0.75;
-            ContentDialog.Resources["ContentDialogMinWidth"] = XamlRoot.Size.Width * 0.75;
-            ContentDialog.Resources["ContentDialogMinHeight"] = XamlRoot.Size.Height * 0.75;
+            ContentDialog.Resources["ContentDialogMaxWidth"] = _xamlRoot.Size.Width * 0.75;
+            ContentDialog.Resources["ContentDialogMaxHeight"] = _xamlRoot.Size.Height * 0.75;
+            ContentDialog.Resources["ContentDialogMinWidth"] = _xamlRoot.Size.Width * 0.75;
+            ContentDialog.Resources["ContentDialogMinHeight"] = _xamlRoot.Size.Height * 0.75;
             ContentDialog.Resources["HorizontalContentAlignment"] = HorizontalAlignment.Stretch;
             ContentDialog.Resources["VerticalContentAlignment"] = VerticalAlignment.Stretch;
         }
 #endif
-        ProgressRing = new ProgressRing();
-        var grid = new Grid();
-        if (HideContent)
-        {
-            grid.Children
-            (
-                WebView2,
-
-                new Rectangle()
-                    .Name(out var rectangle)
-                    .HorizontalAlignment(HorizontalAlignment.Stretch)
-                    .VerticalAlignment(VerticalAlignment.Stretch)
-                    .Fill((Brush)Application.Current.Resources["ContentDialogBackground"]),
-
-
-                ProgressRing,
-
-                new Button()
-                    .Margin(5)
-                    .Name(out var cancelButton)
-                    .Content("CANCEL")
-                    .HorizontalAlignment(HorizontalAlignment.Center)
-                    .VerticalAlignment(VerticalAlignment.Bottom)
-
-            );
-            cancelButton.Click += (_, _) => CancellationTokenSource.Cancel(true);
-        }
-        else
-            grid.Children(
-                WebView2,
-                ProgressRing
-                );
-        ContentDialog.Content = grid;
+            
+        cancelButton.Click += (_, _) => uiCancellationTokenSource.Cancel(true);
+        
     }
 
-    protected async Task ShowAsync()
+    private async Task<T> ProcessAsync()
     {
-        ProgressRing.IsActive = true;
-        await ContentDialog.ShowAsync();
+        _webView2.Loaded += OnLoaded;
+        await _contentDialog.ShowAsync();
+        return await _tcs.Task;
     }
 
-
-}
-
-internal record AuxiliaryWebViewAsyncProcessor<T> : BaseAuxiliaryWebView
-{
-    private Func<WebView2, CancellationToken, Task<T>>? _function;
-
-    public TaskCompletionSource<T> TaskCompletionSource { get; }
-
-    public AuxiliaryWebViewAsyncProcessor(XamlRoot xamlRoot, string html, CancellationToken cancellationToken = default) : base(xamlRoot, html, cancellationToken)
-    {
-        TaskCompletionSource = new TaskCompletionSource<T>();
-    }
-
-    public async Task<T> ProcessAsync(Func<WebView2, CancellationToken, Task<T>> function)
-    {
-        ArgumentNullException.ThrowIfNull(function);
-        _function = function;
-        WebView2.Loaded += OnLoaded;
-        //ContentDialog.Loaded += OnContentDialogLoaded;
-        await ShowAsync();
-        return await TaskCompletionSource.Task;
-    }
-
-    public async void OnLoaded(object sender, RoutedEventArgs e)
+    private async void OnLoaded(object sender, RoutedEventArgs e)
     {
         try
         {
-            if (_function is null)
-                throw new ArgumentNullException(nameof(_function));
-            await WebView2.EnsureCoreWebView2Async().AsTask(CancellationTokenSource.Token);
-
-            WebView2.CoreWebView2.NavigateToString(Html);
-            await WebView2.WaitForDocumentLoadedAsync();
-            if (!HideContent)
-                ProgressRing.Visibility = Visibility.Collapsed;
-
-            var result = await _function(WebView2, CancellationTokenSource.Token);
-            TaskCompletionSource.SetResult(result);
+            await _webView2.EnsureCoreWebView2Async().AsTask(_cancellationToken);
+            await _loadContentAction.Invoke(_webView2, _cancellationToken);
+            await _webView2.WaitForDocumentLoadedAsync(_cancellationToken);
+            var result = await _function(_webView2, _cancellationToken);
+            _tcs.SetResult(result);
         }
         catch (Exception ex)
         {
-            TaskCompletionSource.TrySetException(ex);
+            _tcs.TrySetException(ex);
         }
         finally
         {
-            ContentDialog.Hide();
-            ContentDialog.Loaded -= OnLoaded;
+            _contentDialog.Hide();
+            _contentDialog.Loaded -= OnLoaded;
         }
     }
 
