@@ -458,6 +458,9 @@ internal class AuxiliaryWebViewAsyncProcessor<T>
     
     private readonly ContentDialog _contentDialog;
     private readonly WebView2 _webView2;
+    private readonly ProgressRing _progressRing;
+
+    private bool _showWebContent;
     #endregion
 
     public static async Task<T> Create(
@@ -493,6 +496,7 @@ internal class AuxiliaryWebViewAsyncProcessor<T>
 
         _loadContentAction = loadContentAction;
         _function = contentLoadedFunction;
+        _showWebContent = showWebContent;
 
         _contentDialog = new ContentDialog
         {            
@@ -518,6 +522,7 @@ internal class AuxiliaryWebViewAsyncProcessor<T>
                         .Visibility(showWebContent ? Visibility.Collapsed : Visibility.Visible),
                 
                     new ProgressRing()
+                        .Name(out _progressRing)
                         .IsActive(true),
 
                     new Button()
@@ -566,6 +571,10 @@ internal class AuxiliaryWebViewAsyncProcessor<T>
             await _loadContentAction.Invoke(_webView2, _cancellationToken);
 
             await _webView2.WaitForDocumentLoadedAsync(_cancellationToken);
+
+            if (_showWebContent)
+                _progressRing.Visibility = Visibility.Collapsed;
+
             var result = await _function(_webView2, _cancellationToken);
             _tcs.SetResult(result);
         }
