@@ -114,7 +114,7 @@ public sealed partial class MainPage : Page
     private async void OnWebViewPdfButtonClick(object sender, RoutedEventArgs e)
     {
         // options is broken in WASM
-        var options = new PdfOptions([30, 30, 30, 30],
+        var options = new PdfOptions([30, 30, 30, 30], 
             Html2canvas: new Html2CanvasOptions(Scale: 2),
             JsPDF: new JsPdfOptions(Unit: PdfUnits.Pt, Format: PdfPageSize.Letter));
         await _webView.SavePdfAsync(options);

@@ -9,11 +9,16 @@ function p42_makePdf(options) {
         jsPDF: { unit: 'pt', format: 'letter', orientation: 'portrait' },
     };
     console.log("p42_makePdf_result(" + JSON.stringify(options) + ")");
-    */
-
 
     document.body.insertAdjacentHTML("beforeend", "p42_makePdf_result(" + JSON.stringify(options) + ")");
+    */
 
+    options = {
+        margin: 30,
+        filename: "p42_makePdf.pdf",
+        html2canvas: { scale: 1},
+        jsPDF: { unit: 'pt', format: 'letter', orientation: 'portrait' },
+    };
 
     html2pdf()
         .set(options)

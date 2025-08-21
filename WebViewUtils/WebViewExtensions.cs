@@ -121,15 +121,9 @@ public static class WebViewExtensions
         if (element.XamlRoot is null)
             throw new ArgumentNullException($"{nameof(element)}.{nameof(element.XamlRoot)}");
 
-        var fileTask = RequestStorageFileAsync( element.XamlRoot, "PDF", "pdf");
-        await Task.WhenAll(fileTask, pdfTask);
+        await pdfTask;
 
-        if (fileTask.Result is not { } saveFile)
-            return;
-
-        if (!string.IsNullOrWhiteSpace(pdfTask.Result.error)
-            || pdfTask.Result.pdf is null 
-            || pdfTask.Result.pdf.Length == 0)
+        if (pdfTask.Result.pdf is null || pdfTask.Result.pdf.Length == 0)
         {
             ContentDialog cd = new ()
             {
@@ -137,13 +131,19 @@ public static class WebViewExtensions
                 Title = "PDF Generation Error",
                 Content = string.IsNullOrWhiteSpace(pdfTask.Result.error)
                     ? "Unknown failure"
-                    : new ScrollViewer() .Content(new TextBlock().Text(pdfTask.Result.error)),
+                    : new ScrollViewer() .Content(new TextBlock().Text($"html2pdf error: {pdfTask.Result.error}")),
                 PrimaryButtonText = "OK"
             };
             await cd.ShowAsync();
             return;
         }
 
+        var fileTask = RequestStorageFileAsync( element.XamlRoot, "PDF", "pdf");
+        await fileTask;
+
+        if (fileTask.Result is not { } saveFile)
+            return;
+        
         try
         {
             CachedFileManager.DeferUpdates(saveFile);
@@ -267,8 +267,8 @@ public static class WebViewExtensions
                     suffixes[i] = $".{suffix}";
             }
 
-            if (suffixes.FirstOrDefault() is { } primarySuffix)
-                picker.SuggestedFileName = $"document{primarySuffix}";
+            //if (suffixes.FirstOrDefault() is { } primarySuffix)
+            //    picker.SuggestedFileName = $"document{primarySuffix}";
         }
 
         picker.FileTypeChoices.Add(type, suffixes);

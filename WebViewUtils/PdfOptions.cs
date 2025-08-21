@@ -12,6 +12,7 @@ namespace WebViewUtils;
 public record PdfOptions(
     [ValidMargin]
     double[]? Margin = null, 
+    string Filename = "document.pdf",
     PdfPageBreakMode? PageBreak = null, 
     PdfImageSettings? Image = null, 
     bool? EnableLinks = null, 
