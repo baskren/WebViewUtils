@@ -54,7 +54,8 @@ public static class WebViewExtensions
 
             var result = await wkWebView.PrintAsync();
 #else
-            await webView2.ExecuteScriptAsync("window.print();").AsTask(token);
+            await webView2.ExecuteScriptAsync("print();").AsTask(token);
+
 #endif
         }
         catch (Exception ex)
@@ -74,23 +75,39 @@ public static class WebViewExtensions
         if (element.XamlRoot is null)
             throw new ArgumentNullException($"{nameof(element)}.{nameof(element.XamlRoot)}");
         
-        await AuxiliaryWebViewAsyncProcessor<bool>.Create(element.XamlRoot, html, PrintFunction, cancellationToken:  token);
+        await AuxiliaryWebViewAsyncProcessor<bool>.Create(element.XamlRoot, html, PrintFunction, showWebContent: OperatingSystem.IsWindows(), cancellationToken:  token);
         return;
 
         static async Task<bool> PrintFunction(WebView2 webView, CancellationToken localToken)
         {
-            await webView.PrintAsync(localToken);
-            return true;
+            try
+            {
+                await webView.PrintAsync(localToken);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine(ex);
+                return false;
+            }
         }
     }
     
     public static async Task SavePdfAsync(UIElement element, string html, PdfOptions? options = null, CancellationToken token = default)
     {
-        if (element.XamlRoot is null)
-            throw new ArgumentNullException($"{nameof(element)}.{nameof(element.XamlRoot)}");
+        try
+        {
+            if (element.XamlRoot is null)
+                throw new ArgumentNullException($"{nameof(element)}.{nameof(element.XamlRoot)}");
 
-        var pdfTask = GeneratePdfAsync(element, html, options, token);
-        await SavePdfAsync(element, pdfTask);
+            var pdfTask = GeneratePdfAsync(element, html, options, token);
+            await SavePdfAsync(element, pdfTask);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(ex);
+            return;
+        }
     }
 
     public static async Task SavePdfAsync(this WebView2 webView, PdfOptions? options = null, CancellationToken token = default)
@@ -162,49 +179,65 @@ public static class WebViewExtensions
 
         async Task<(byte[]?, string)> MakePdfFunction(WebView2 webView, CancellationToken localToken)
         {
-            var result = await webView.GeneratePdfAsync(options, localToken);
-            return result;
+            try
+            {
+                var result = await webView.GeneratePdfAsync(options, localToken);
+                return result;
+            }
+            catch (Exception e)
+            {
+                Debug.WriteLine(e);
+                return (null, e.ToString());
+            }
         }
     }
 
     public static async Task<(byte[]? pdf, string error)> GeneratePdfAsync(this WebView2 webView2, PdfOptions? options = null, CancellationToken token = default)
     {
-        await webView2.WaitForDocumentLoadedAsync(token);
-        await webView2.AssurePdfScriptsAsync(token);
-
-        var result = string.Empty;
-        var error = string.Empty;
-
-
-        var jsonOptions = options == null
-            ? ""
-            : JsonSerializer.Serialize(options, PdfOptionsSourceGenerationContext.Default.PdfOptions).Trim('"');
-
-        await webView2.ExecuteScriptAsync($"p42_makePdf({jsonOptions})").AsTask(token);
-        while (string.IsNullOrWhiteSpace(result) && string.IsNullOrWhiteSpace(error))
+        try
         {
-            error = await webView2.CoreWebView2.ExecuteScriptAsync("window.p42_makeP42_error").AsTask(token) ?? "";
-            //Debug.WriteLine($"error:[{error}]");
-            //Console.WriteLine($"error:[{error}]");
-            error = error.Trim('"').Trim('"');
-            if (error == "null")
-                error = string.Empty;
-            if (!string.IsNullOrEmpty(error))
-                return (null, error);
+            await webView2.WaitForDocumentLoadedAsync(token);
+            await webView2.AssurePdfScriptsAsync(token);
 
-            result = await webView2.CoreWebView2.ExecuteScriptAsync("window.p42_makePdf_result").AsTask(token) ?? "";
-            result = result.Trim('"').Trim('"');
-            //Console.WriteLine($"result: [{result}]");
-            if (result == "null")
-                result = string.Empty;
-            else if (!string.IsNullOrEmpty(result))
-                Debug.WriteLine("bingo");
+            var result = string.Empty;
+            var error = string.Empty;
 
-            await Task.Delay(500, token);
+
+            var jsonOptions = options == null
+                ? ""
+                : JsonSerializer.Serialize(options, PdfOptionsSourceGenerationContext.Default.PdfOptions).Trim('"');
+
+            await webView2.ExecuteScriptAsync($"p42_makePdf({jsonOptions})").AsTask(token);
+            while (string.IsNullOrWhiteSpace(result) && string.IsNullOrWhiteSpace(error))
+            {
+                error = await webView2.CoreWebView2.ExecuteScriptAsync("window.p42_makeP42_error").AsTask(token) ?? "";
+                //Debug.WriteLine($"error:[{error}]");
+                //Console.WriteLine($"error:[{error}]");
+                error = error.Trim('"').Trim('"');
+                if (error == "null")
+                    error = string.Empty;
+                if (!string.IsNullOrEmpty(error))
+                    return (null, error);
+
+                result = await webView2.CoreWebView2.ExecuteScriptAsync("window.p42_makePdf_result").AsTask(token) ?? "";
+                result = result.Trim('"').Trim('"');
+                //Console.WriteLine($"result: [{result}]");
+                if (result == "null")
+                    result = string.Empty;
+                else if (!string.IsNullOrEmpty(result))
+                    Debug.WriteLine("bingo");
+
+                await Task.Delay(500, token);
+            }
+
+            var bytes = Convert.FromBase64String(result);
+            return (bytes, "");
         }
-
-        var bytes = Convert.FromBase64String(result);
-        return (bytes, "");
+        catch (Exception ex)
+        {
+            Debug.WriteLine(ex.ToString());
+            return (null, ex.ToString());
+        }
     }
 
     public static async Task<StorageFile?> RequestStorageFileAsync(XamlRoot xamlRoot, string type, params List<string> suffixes)
@@ -482,7 +515,7 @@ internal class AuxiliaryWebViewAsyncProcessor<T>
                         .HorizontalAlignment(HorizontalAlignment.Stretch)
                         .VerticalAlignment(VerticalAlignment.Stretch)
                         .Fill((Brush)Application.Current.Resources["ContentDialogBackground"])
-                        .Visibility(showWebContent ? Visibility.Visible : Visibility.Collapsed),
+                        .Visibility(showWebContent ? Visibility.Collapsed : Visibility.Visible),
                 
                     new ProgressRing()
                         .IsActive(true),
@@ -502,13 +535,13 @@ internal class AuxiliaryWebViewAsyncProcessor<T>
 #if WINDOWS
         if (showWebContent)
         {
-            ContentDialog.Resources["ContentDialogPadding"] = new Thickness(4);
-            ContentDialog.Resources["ContentDialogMaxWidth"] = _xamlRoot.Size.Width * 0.75;
-            ContentDialog.Resources["ContentDialogMaxHeight"] = _xamlRoot.Size.Height * 0.75;
-            ContentDialog.Resources["ContentDialogMinWidth"] = _xamlRoot.Size.Width * 0.75;
-            ContentDialog.Resources["ContentDialogMinHeight"] = _xamlRoot.Size.Height * 0.75;
-            ContentDialog.Resources["HorizontalContentAlignment"] = HorizontalAlignment.Stretch;
-            ContentDialog.Resources["VerticalContentAlignment"] = VerticalAlignment.Stretch;
+            _contentDialog.Resources["ContentDialogPadding"] = new Thickness(4);
+            _contentDialog.Resources["ContentDialogMaxWidth"] = xamlRoot.Size.Width * 0.75;
+            _contentDialog.Resources["ContentDialogMaxHeight"] = xamlRoot.Size.Height * 0.75;
+            _contentDialog.Resources["ContentDialogMinWidth"] = xamlRoot.Size.Width * 0.75;
+            _contentDialog.Resources["ContentDialogMinHeight"] = xamlRoot.Size.Height * 0.75;
+            _contentDialog.Resources["HorizontalContentAlignment"] = HorizontalAlignment.Stretch;
+            _contentDialog.Resources["VerticalContentAlignment"] = VerticalAlignment.Stretch;
         }
 #endif
             
@@ -525,10 +558,13 @@ internal class AuxiliaryWebViewAsyncProcessor<T>
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
+        await Task.Delay(1000);  // without this, WinSdk version crashes
+
         try
         {
             await _webView2.EnsureCoreWebView2Async().AsTask(_cancellationToken);
             await _loadContentAction.Invoke(_webView2, _cancellationToken);
+
             await _webView2.WaitForDocumentLoadedAsync(_cancellationToken);
             var result = await _function(_webView2, _cancellationToken);
             _tcs.SetResult(result);

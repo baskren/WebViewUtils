@@ -91,35 +91,24 @@ public sealed partial class MainPage : Page
         await _webView.PrintAsync();
     }
 
-    public void ShowDescendents(FrameworkElement element)
-    {
-        var sb = new StringBuilder();
-        sb.AppendLine($"[{element.Name}] : {element.GetType()}");
-        ShowDescendents(sb, element, 0);
-        Debug.WriteLine(sb.ToString());
-    }
-
-    public void ShowDescendents(StringBuilder sb, FrameworkElement element, int depth)
-    {
-        var prefix = $"{new string('\t', depth)}";
-        var kids = VisualTreeHelper.GetChildren(element);
-        var last = kids.LastOrDefault();
-        foreach (var child in kids)
-        {
-            sb.Append(prefix);
-            sb.Append(child == last
-                ? "╚═ "
-                : "╠═ ");
-            sb.AppendLine($"[{element.GetType()}] {(child is FrameworkElement fe ? fe.Name : string.Empty)}");
-            if (child is FrameworkElement e)
-                ShowDescendents(sb, e, depth + 1);
-        }
-    }
 
     private async void OnHtmlPrintButtonClick(object sender, RoutedEventArgs e)
     {
-        var html = await WebViewExtensions.ReadResourceAsTextAsync("WebViewUtils.Resources.Html5TestPage.html");
-        await WebViewExtensions.PrintAsync(this, html);
+        try
+        {
+            var html = await WebViewExtensions.ReadResourceAsTextAsync("WebViewUtils.Resources.Html5TestPage.html");
+            await WebViewExtensions.PrintAsync(this, html);
+        }
+        catch (Exception ex)
+        {
+            var cd = new ContentDialog
+            {
+                Title = "Print Error",
+                Content = ex.Message,
+                PrimaryButtonText = "OK"
+            };
+            await cd.ShowAsync();
+        }
     }
 
     private async void OnWebViewPdfButtonClick(object sender, RoutedEventArgs e)
@@ -131,8 +120,21 @@ public sealed partial class MainPage : Page
 
     async void OnHtmlPdfButtonClick(object sender, RoutedEventArgs e)
     {
-        var html = await WebViewExtensions.ReadResourceAsTextAsync("WebViewUtils.Resources.Html5TestPage.html");
-        await WebViewExtensions.SavePdfAsync(this, html);
+        try
+        {
+            var html = await WebViewExtensions.ReadResourceAsTextAsync("WebViewUtils.Resources.Html5TestPage.html");
+            await WebViewExtensions.SavePdfAsync(this, html);
+        }
+        catch (Exception ex)
+        {
+            var cd = new ContentDialog
+            {
+                Title = "Pdf Error",
+                Content = ex.Message,
+                PrimaryButtonText = "OK"
+            };
+            await cd.ShowAsync();
+        }
     }
 
 
