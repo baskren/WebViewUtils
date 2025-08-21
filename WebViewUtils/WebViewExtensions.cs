@@ -147,7 +147,11 @@ public static class WebViewExtensions
         try
         {
             CachedFileManager.DeferUpdates(saveFile);
+#if __DESKTOP__
+            await System.IO.File.WriteAllBytesAsync(saveFile.Path, pdfTask.Result.pdf);
+#else
             await FileIO.WriteBytesAsync(saveFile, pdfTask.Result.pdf);
+#endif
             await CachedFileManager.CompleteUpdatesAsync(saveFile);
         }
         catch (Exception e)

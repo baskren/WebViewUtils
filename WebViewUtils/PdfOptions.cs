@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
 using System.Linq;
 using System.Text;
 using System.Text.Json.Serialization;
@@ -9,15 +10,16 @@ namespace WebViewUtils;
 
 
 public record PdfOptions(
-    Thickness Margin = default, 
+    [ValidMargin]
+    double[]? Margin = null, 
     PdfPageBreakMode? PageBreak = null, 
     PdfImageSettings? Image = null, 
     bool? EnableLinks = null, 
-    PdfPageOrientation? Orientation = null, 
-    PdfUnits? Unit = null,
-    PdfPageSize? Format = null,
-    bool? Compress = null,
-    PdfEncryption? Encryption = null,  
+    Html2CanvasOptions? Html2canvas = null,
+    JsPdfOptions? JsPDF = null
+    ) {}
+
+public record Html2CanvasOptions(
     bool? AllowTaint = null,
     string? BackgroundColor = null,
     bool? ForeignObjectRendering = null,
@@ -35,10 +37,24 @@ public record PdfOptions(
     double? ScrollY = null,
     double? WindowWidth = null,
     double? WindowHeight = null
-    )
+    ){ }
+
+public record JsPdfOptions(
+    PdfPageOrientation? Orientation = null, 
+    PdfUnits? Unit = null,
+    PdfPageSize? Format = null,
+    bool? Compress = null,
+    PdfEncryption? Encryption = null
+    ) { }
+
+public class ValidMarginAttribute : ValidationAttribute
 {
-    
+    protected override ValidationResult? IsValid(object? value, ValidationContext validationContext)
+        => value is null or ICollection<double> { Count: 0 or 1 or 2 or 4 }
+            ? ValidationResult.Success
+            : new ValidationResult("The property is not a valid collection type.");
 }
+
 
 [Flags]
 public enum PdfPageBreakMode
@@ -84,6 +100,8 @@ public enum PdfPageOrientation
 
 public enum PdfUnits
 {
+    [JsonStringEnumMemberName("pt")]
+    Pt,
     [JsonStringEnumMemberName("mm")]
     Mm,
     [JsonStringEnumMemberName("cm")]
