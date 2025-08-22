@@ -60,13 +60,7 @@ public static class WebViewExtensions
         }
         catch (Exception ex)
         {
-            var cd = new ContentDialog
-            {
-                Title = "Print Error",
-                Content = ex.Message,
-                PrimaryButtonText = "OK"
-            };
-            await cd.ShowAsync();
+            await ShowExceptionDialogAsync(webView2.XamlRoot, "Print Error", ex);
         }
     }
 
@@ -100,8 +94,12 @@ public static class WebViewExtensions
             if (element.XamlRoot is null)
                 throw new ArgumentNullException($"{nameof(element)}.{nameof(element.XamlRoot)}");
 
+            var fileName = string.IsNullOrEmpty(options?.Filename)
+                ? "document"
+                : options.Filename;
+        
             var pdfTask = GeneratePdfAsync(element, html, options, token);
-            await SavePdfAsync(element, pdfTask);
+            await SavePdfAsync(element, pdfTask, fileName);
         }
         catch (Exception ex)
         {
@@ -110,40 +108,52 @@ public static class WebViewExtensions
         }
     }
 
-    public static async Task SavePdfAsync(this WebView2 webView, PdfOptions? options = null, CancellationToken token = default)
+    public static async Task SavePdfAsync(this WebView2 webView,  PdfOptions? options = null, CancellationToken token = default)
     {
         var pdfTask = webView.GeneratePdfAsync(options, token);
-        await SavePdfAsync(webView, pdfTask);
+
+        var fileName = string.IsNullOrEmpty(options?.Filename)
+            ? "document"
+            : options.Filename;
+        
+        await SavePdfAsync(webView, pdfTask, fileName);
     }
 
-    public static async Task SavePdfAsync(UIElement element, Task<(byte[]? pdf, string error)> pdfTask)
+    private static async Task SavePdfAsync(UIElement element, Task<(byte[]? pdf, string error)> pdfTask, string fileName)
     {
         if (element.XamlRoot is null)
             throw new ArgumentNullException($"{nameof(element)}.{nameof(element.XamlRoot)}");
 
-        await pdfTask;
+        StorageFile? saveFile = null;
+        var fileTask = RequestStorageFileAsync( element.XamlRoot, "PDF", fileName, "pdf");
 
-        if (pdfTask.Result.pdf is null || pdfTask.Result.pdf.Length == 0)
+        try
         {
-            ContentDialog cd = new ()
-            {
-                XamlRoot = element.XamlRoot,
-                Title = "PDF Generation Error",
-                Content = string.IsNullOrWhiteSpace(pdfTask.Result.error)
-                    ? "Unknown failure"
-                    : new ScrollViewer() .Content(new TextBlock().Text($"html2pdf error: {pdfTask.Result.error}")),
-                PrimaryButtonText = "OK"
-            };
-            await cd.ShowAsync();
+#if BROWSERWASM
+            saveFile = await fileTask;
+
+            if (saveFile is null)
+                return;
+
+            await pdfTask;
+#else
+            await Task.WhenAll(fileTask, pdfTask);
+            saveFile = fileTask.Result;
+#endif
+        }
+        catch (Exception ex)
+        {
+            await ShowExceptionDialogAsync(element.XamlRoot, "PDF Generation / Save Error", ex);
             return;
         }
 
-        var fileTask = RequestStorageFileAsync( element.XamlRoot, "PDF", "pdf");
-        await fileTask;
-
-        if (fileTask.Result is not { } saveFile)
+        if (pdfTask.Result.pdf is null || pdfTask.Result.pdf.Length == 0)
+        {
+            await ShowErrorDialogAsync(element.XamlRoot, "PDF Generation Error", pdfTask.Result.error);
             return;
-        
+        }
+
+
         try
         {
             CachedFileManager.DeferUpdates(saveFile);
@@ -156,19 +166,10 @@ public static class WebViewExtensions
         }
         catch (Exception e)
         {
-            ContentDialog cd = new ()
-            {
-                XamlRoot = element.XamlRoot,
-                Title = "File Save Error",
-                Content = string.IsNullOrWhiteSpace(e.ToString())
-                    ? "Unknown failure"
-                    : new ScrollViewer().Content(new TextBlock().Text(e.ToString())),
-                PrimaryButtonText = "OK"
-            };
-            await cd.ShowAsync();
-            
+            await ShowExceptionDialogAsync(element.XamlRoot, "File Save Error", e);
         }
     }
+    
     
     public static async Task<(byte[]? pdf, string error)> GeneratePdfAsync(this UIElement element, string html, PdfOptions? options = null, CancellationToken token = default)
     {
@@ -244,34 +245,40 @@ public static class WebViewExtensions
         }
     }
 
-    public static async Task<StorageFile?> RequestStorageFileAsync(XamlRoot xamlRoot, string type, params List<string> suffixes)
+    public static async Task<StorageFile?> RequestStorageFileAsync(XamlRoot xamlRoot, string type,  string suggestedName, params List<string> suffixes)
     {
+
+        if (!string.IsNullOrEmpty(suggestedName) && suggestedName.Contains('.'))
+        {
+            var extension = System.IO.Path.GetExtension(suggestedName);
+            suffixes.Insert(0, extension);
+            suggestedName = System.IO.Path.GetFileNameWithoutExtension(suggestedName);
+        }
+        
         #if __IOS__
         var picker = new CustomFileSavePicker(xamlRoot)
         #else
         var picker = new FileSavePicker
         #endif
         {
-            SuggestedStartLocation = PickerLocationId.Downloads
+            SuggestedStartLocation = PickerLocationId.Downloads,
+            SuggestedFileName = suggestedName,
         };
 
-        if (suffixes.Count > 0)
+        if (suffixes is { Count: > 0 })
         {
             for (var i = suffixes.Count - 1; i >= 0; i--)
             {
                 var suffix = suffixes[i].TrimStart('.');
-
                 if (string.IsNullOrWhiteSpace(suffix))
                     suffixes.RemoveAt(i);
                 else
                     suffixes[i] = $".{suffix}";
             }
 
-            //if (suffixes.FirstOrDefault() is { } primarySuffix)
-            //    picker.SuggestedFileName = $"document{primarySuffix}";
+            picker.FileTypeChoices.Add(type, suffixes);
         }
 
-        picker.FileTypeChoices.Add(type, suffixes);
 
 
 #if WINDOWS
@@ -286,6 +293,28 @@ public static class WebViewExtensions
         
     }
 
+    private static Task ShowExceptionDialogAsync(XamlRoot xamlRoot, string title, Exception e)
+        => ShowErrorDialogAsync(xamlRoot, title, e.ToString());
+    private static async Task ShowErrorDialogAsync(XamlRoot xamlRoot, string title, string? error)
+    {
+        ContentDialog cd = new ()
+        {
+            XamlRoot = xamlRoot,
+            Title = title,
+            Content = string.IsNullOrWhiteSpace(error)
+                ? "Unknown failure"
+                : new ScrollView()
+                    .Content
+                        (
+                            new TextBlock()
+                                .Text(error)
+                                .MaxLines(1000)
+                            ),
+            PrimaryButtonText = "OK"
+        };
+        await cd.ShowAsync();
+    }
+    
     private static async Task WaitForVariableValue(this WebView2 webView2, string variable, string value, CancellationToken token = default)
     {
         await webView2.EnsureCoreWebView2Async().AsTask(token);
