@@ -99,7 +99,7 @@ public static class WebViewExtensions
                 : options.Filename;
         
             var pdfTask = GeneratePdfAsync(element, html, options, token);
-            await SavePdfAsync(element, pdfTask, fileName);
+            await InternalSavePdfAsync(element, pdfTask, fileName, token);
         }
         catch (Exception ex)
         {
@@ -115,11 +115,14 @@ public static class WebViewExtensions
         var fileName = string.IsNullOrEmpty(options?.Filename)
             ? "document"
             : options.Filename;
+
+        async Task MakePdfFunction(CancellationToken localToken)
+            => await InternalSavePdfAsync(webView, pdfTask, fileName, localToken);
         
-        await SavePdfAsync(webView, pdfTask, fileName);
+        await BusyDialog.Create(webView.XamlRoot, "Generating / Saving PDF", MakePdfFunction, cancellationToken: token);
     }
 
-    private static async Task SavePdfAsync(UIElement element, Task<(byte[]? pdf, string error)> pdfTask, string fileName)
+    private static async Task InternalSavePdfAsync(UIElement element, Task<(byte[]? pdf, string error)> pdfTask, string fileName, CancellationToken token)
     {
         if (element.XamlRoot is null)
             throw new ArgumentNullException($"{nameof(element)}.{nameof(element.XamlRoot)}");
@@ -135,6 +138,9 @@ public static class WebViewExtensions
             if (saveFile is null)
                 return;
 
+            if (token.IsCancellationRequested)
+                return;
+            
             await pdfTask;
 #else
             await Task.WhenAll(fileTask, pdfTask);
@@ -147,18 +153,23 @@ public static class WebViewExtensions
             return;
         }
 
+        if (token.IsCancellationRequested)
+            return;
+
         if (pdfTask.Result.pdf is null || pdfTask.Result.pdf.Length == 0)
         {
             await ShowErrorDialogAsync(element.XamlRoot, "PDF Generation Error", pdfTask.Result.error);
             return;
         }
 
+        if (token.IsCancellationRequested)
+            return;
 
         try
         {
             CachedFileManager.DeferUpdates(saveFile);
 #if __DESKTOP__
-            await System.IO.File.WriteAllBytesAsync(saveFile.Path, pdfTask.Result.pdf);
+            await System.IO.File.WriteAllBytesAsync(saveFile.Path, pdfTask.Result.pdf, token);
 #else
             await FileIO.WriteBytesAsync(saveFile, pdfTask.Result.pdf);
 #endif
@@ -293,9 +304,9 @@ public static class WebViewExtensions
         
     }
 
-    private static Task ShowExceptionDialogAsync(XamlRoot xamlRoot, string title, Exception e)
+    internal static Task ShowExceptionDialogAsync(XamlRoot xamlRoot, string title, Exception e)
         => ShowErrorDialogAsync(xamlRoot, title, e.ToString());
-    private static async Task ShowErrorDialogAsync(XamlRoot xamlRoot, string title, string? error)
+    internal static async Task ShowErrorDialogAsync(XamlRoot xamlRoot, string title, string? error)
     {
         ContentDialog cd = new ()
         {
@@ -303,11 +314,12 @@ public static class WebViewExtensions
             Title = title,
             Content = string.IsNullOrWhiteSpace(error)
                 ? "Unknown failure"
-                : new ScrollView()
+                : new ScrollViewer()
                     .Content
                         (
                             new TextBlock()
                                 .Text(error)
+                                .TextWrapping(TextWrapping.WrapWholeWords)
                                 .MaxLines(1000)
                             ),
             PrimaryButtonText = "OK"
@@ -478,6 +490,124 @@ public static class WebViewExtensions
     
 }
 
+internal class RelayCommand(Action<object?> execute, Func<object?, bool>? canExecute = null)
+    : ICommand
+{
+    private readonly Action<object?> _execute = execute ?? throw new ArgumentNullException(nameof(execute));
+
+    public event EventHandler? CanExecuteChanged;
+
+    public bool CanExecute(object? parameter) => canExecute?.Invoke(parameter) ?? true;
+
+    public void Execute(object? parameter) => _execute(parameter);
+
+    public void RaiseCanExecuteChanged() => CanExecuteChanged?.Invoke(this, EventArgs.Empty);
+}
+
+internal class BusyDialog
+{
+    #region  Fields
+
+    private readonly TaskCompletionSource<bool> _tcs = new();
+    private readonly CancellationToken _cancellationToken;
+
+    private readonly Func<CancellationToken, Task> _function;
+    
+    private readonly ContentDialog _contentDialog;
+    private readonly ProgressRing _progressRing;
+    
+    private readonly XamlRoot _xamlRoot;
+    private readonly string _title;
+    #endregion
+
+    public static async Task Create(
+        XamlRoot xamlRoot, 
+        string title,
+        Func<CancellationToken, Task> processFunction, 
+        bool hasCancelButton = true,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNullOrWhiteSpace(title);
+        var processor = new BusyDialog(xamlRoot, title, processFunction, hasCancelButton, cancellationToken);
+        await processor.ProcessAsync();
+    }
+    
+    private BusyDialog(XamlRoot xamlRoot, string title, Func<CancellationToken, Task> processFunction,
+        bool hasCancelButton = false, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(xamlRoot);
+        ArgumentNullException.ThrowIfNull(processFunction);
+        
+        
+        CancellationTokenSource uiCancellationTokenSource = new ();
+        _cancellationToken = CancellationTokenSource.CreateLinkedTokenSource(uiCancellationTokenSource.Token, cancellationToken).Token;
+        
+        _xamlRoot = xamlRoot;
+        _function = processFunction;
+        _title = title;
+        
+        _contentDialog = new ContentDialog
+        {            
+            XamlRoot = _xamlRoot,
+            Title = _title,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Stretch,
+            Margin = new Thickness(0),
+            Padding = new Thickness(0),
+            Content =  new ProgressRing()
+                .Name(out _progressRing)
+                .IsActive(true),
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            VerticalContentAlignment = VerticalAlignment.Center,
+        };
+
+
+        if (!hasCancelButton)
+            return;
+
+        _contentDialog.CloseButtonText = "CANCEL";
+        _contentDialog.CloseButtonCommand = new RelayCommand((_) => uiCancellationTokenSource.Cancel());
+
+        _contentDialog.Loaded += OnLoaded;
+    }
+
+    private async void OnLoaded(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            await _function(_cancellationToken);
+            _contentDialog.Content = "COMPLETED";
+            _contentDialog.CloseButtonText = "OK";
+            await Task.Delay(3000, _cancellationToken);
+            _tcs.SetResult(true);
+        }
+        catch (Exception ex)
+        {
+            _contentDialog.Title = $"{_title} Error";
+            _contentDialog.Content = new ScrollViewer()
+                .Content
+                (
+                    new TextBlock()
+                        .Text(ex.ToString())
+                        .TextWrapping(TextWrapping.WrapWholeWords)
+                        .MaxLines(1000)
+                );
+            _contentDialog.CloseButtonText = "OK";
+        }
+        finally
+        {
+            _contentDialog.Hide();
+            _contentDialog.Loaded -= OnLoaded;
+        }
+    }
+
+    private async Task ProcessAsync()
+    {
+        await _contentDialog.ShowAsync();
+        await _tcs.Task;
+    }
+
+}
 
 internal class AuxiliaryWebViewAsyncProcessor<T> 
 {
@@ -519,7 +649,7 @@ internal class AuxiliaryWebViewAsyncProcessor<T>
         }
 
     }
-    
+
     private AuxiliaryWebViewAsyncProcessor(XamlRoot xamlRoot, Func<WebView2, CancellationToken, Task> loadContentAction, Func<WebView2, CancellationToken, Task<T>> contentLoadedFunction, bool showWebContent, bool hasCancelButton, CancellationToken cancellationToken) 
     {
         ArgumentNullException.ThrowIfNull(xamlRoot);
