@@ -277,8 +277,10 @@ public static class WebViewExtensions
 #if WINDOWS
         var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(((App)App.Current).MainWindow);
         WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
+#elif BROWSERWASM
+        if (!Directory.Exists("/cache"))
+            Directory.CreateDirectory("/cache");
 #endif
-
         
         return await picker.PickSaveFileAsync();
         
