@@ -544,14 +544,18 @@ internal class BusyDialog
             _contentDialog.Content = "COMPLETED";
             _contentDialog.CloseButtonText = "OK";
             _tcs.TrySetResult(true);
+            await Task.Delay(3000, _cancellationToken);
         }
+        /*
         catch (TaskCanceledException tce)
         {
             _contentDialog.Content = "CANCELLED";
             _tcs.TrySetException(tce);
         }
+        */
         catch (Exception ex)
         {
+            /*
             _contentDialog.Title = $"{_title} Error";
             _contentDialog.Content = new ScrollViewer()
                 .Content
@@ -561,12 +565,12 @@ internal class BusyDialog
                         .TextWrapping(TextWrapping.WrapWholeWords)
                         .MaxLines(1000)
                 );
+                */
             _tcs.TrySetException(ex);
         }
         finally
         {
             _contentDialog.CloseButtonText = "OK";
-            await Task.Delay(3000, _cancellationToken);
             _contentDialog.Hide();
             _contentDialog.Loaded -= OnLoaded;
         }
@@ -709,14 +713,18 @@ internal class AuxiliaryWebViewAsyncProcessor<T>
             _contentDialog.Content = "COMPLETED";
             _contentDialog.CloseButtonText = "OK";
             _tcs.TrySetResult(result);
+            await Task.Delay(3000, _cancellationToken);
         }
+        /*
         catch (TaskCanceledException tce)
         {
             _contentDialog.Content = "CANCELLED";
             _tcs.TrySetException(tce);
         }
+        */
         catch (Exception ex)
         {
+            /*
             _contentDialog.Title = "Error"; // $"{_title} Error";
             _contentDialog.Content = new ScrollViewer()
                 .Content
@@ -727,11 +735,11 @@ internal class AuxiliaryWebViewAsyncProcessor<T>
                         .MaxLines(1000)
                 );
             _contentDialog.CloseButtonText = "OK";
+            */
             _tcs.TrySetException(ex);
         }
         finally
         {
-            await Task.Delay(3000, _cancellationToken);
             _contentDialog.Hide();
             _contentDialog.Loaded -= OnLoaded;
         }

@@ -87,8 +87,15 @@ public sealed partial class MainPage : Page
 
     private async void OnWebViewPrintButtonClick(object sender, RoutedEventArgs e)
     {
-        await _webView.EnsureCoreWebView2Async();
-        await _webView.PrintAsync();
+        try
+        {
+            await _webView.EnsureCoreWebView2Async();
+            await _webView.PrintAsync();
+        }
+        catch (Exception ex)
+        {
+            await WebViewExtensions.ShowExceptionDialogAsync(XamlRoot, "WebView Print", ex);
+        }
     }
 
 
@@ -101,23 +108,24 @@ public sealed partial class MainPage : Page
         }
         catch (Exception ex)
         {
-            var cd = new ContentDialog
-            {
-                Title = "Print Error",
-                Content = ex.Message,
-                PrimaryButtonText = "OK"
-            };
-            await cd.ShowAsync();
+            await WebViewExtensions.ShowExceptionDialogAsync(XamlRoot, "Html Print", ex);
         }
     }
 
     private async void OnWebViewPdfButtonClick(object sender, RoutedEventArgs e)
     {
+        try
+        {
+            var options = new PdfOptions([30, 30, 30, 30],
+                Html2canvas: new Html2CanvasOptions(Scale: 2),
+                JsPDF: new JsPdfOptions(Unit: PdfUnits.Pt, Format: PdfPageSize.Letter));
+            await _webView.SavePdfAsync(options);
+        }
+        catch (Exception ex)
+        {
+            await WebViewExtensions.ShowExceptionDialogAsync(XamlRoot, "WebView PDF", ex);
+        }
         // options is broken in WASM
-        var options = new PdfOptions([30, 30, 30, 30], 
-            Html2canvas: new Html2CanvasOptions(Scale: 2),
-            JsPDF: new JsPdfOptions(Unit: PdfUnits.Pt, Format: PdfPageSize.Letter));
-        await _webView.SavePdfAsync(options);
     }
 
     async void OnHtmlPdfButtonClick(object sender, RoutedEventArgs e)
@@ -129,13 +137,7 @@ public sealed partial class MainPage : Page
         }
         catch (Exception ex)
         {
-            var cd = new ContentDialog
-            {
-                Title = "Pdf Error",
-                Content = ex.Message,
-                PrimaryButtonText = "OK"
-            };
-            await cd.ShowAsync();
+            await WebViewExtensions.ShowExceptionDialogAsync(XamlRoot, "Html PDF", ex);
         }
     }
 
