@@ -32,8 +32,6 @@ public static class WebViewExtensions
     
     public static async Task PrintAsync(this WebView2 webView2, CancellationToken token = default)
     {
-        try
-        {
             await webView2.WaitForDocumentLoadedAsync(token);
 #if __ANDROID__
             var nativeWebViewWrapper = webView2.GetNativeWebViewWrapper();
@@ -57,11 +55,6 @@ public static class WebViewExtensions
             await webView2.ExecuteScriptAsync("print();").AsTask(token);
 
 #endif
-        }
-        catch (Exception ex)
-        {
-            await ShowExceptionDialogAsync(webView2.XamlRoot, "Print Error", ex);
-        }
     }
 
     public static async Task PrintAsync(UIElement element, string html, CancellationToken token = default)
@@ -74,38 +67,30 @@ public static class WebViewExtensions
 
         static async Task<bool> PrintFunction(WebView2 webView, CancellationToken localToken)
         {
-            try
-            {
-                await webView.PrintAsync(localToken);
-                return true;
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine(ex);
-                return false;
-            }
+            await webView.PrintAsync(localToken);
+            return true;
         }
     }
     
     public static async Task SavePdfAsync(UIElement element, string html, PdfOptions? options = null, CancellationToken token = default)
     {
-        try
-        {
             if (element.XamlRoot is null)
                 throw new ArgumentNullException($"{nameof(element)}.{nameof(element.XamlRoot)}");
 
             var fileName = string.IsNullOrEmpty(options?.Filename)
                 ? "document"
                 : options.Filename;
-        
-            var pdfTask = GeneratePdfAsync(element, html, options, token);
-            await InternalSavePdfAsync(element, pdfTask, fileName, token);
-        }
-        catch (Exception ex)
-        {
-            Debug.WriteLine(ex);
+
+            await AuxiliaryWebViewAsyncProcessor<bool>.Create(element.XamlRoot, html, MakePdfFunction,
+                cancellationToken: token);
             return;
-        }
+
+            async Task<bool> MakePdfFunction(WebView2 webView, CancellationToken localToken)
+            {
+                var pdfTask =  webView.GeneratePdfAsync(options, localToken);
+                await InternalSavePdfAsync(element, pdfTask, fileName, localToken);
+                return true;
+            }
     }
 
     public static async Task SavePdfAsync(this WebView2 webView,  PdfOptions? options = null, CancellationToken token = default)
@@ -116,10 +101,13 @@ public static class WebViewExtensions
             ? "document"
             : options.Filename;
 
+        await BusyDialog.Create(webView.XamlRoot, "Generating / Saving PDF", MakePdfFunction, cancellationToken: token);
+        return;
+        
         async Task MakePdfFunction(CancellationToken localToken)
             => await InternalSavePdfAsync(webView, pdfTask, fileName, localToken);
-        
-        await BusyDialog.Create(webView.XamlRoot, "Generating / Saving PDF", MakePdfFunction, cancellationToken: token);
+
+
     }
 
     private static async Task InternalSavePdfAsync(UIElement element, Task<(byte[]? pdf, string error)> pdfTask, string fileName, CancellationToken token)
@@ -132,24 +120,12 @@ public static class WebViewExtensions
 
         try
         {
-#if BROWSERWASM
-            saveFile = await fileTask;
-
-            if (saveFile is null)
-                return;
-
-            if (token.IsCancellationRequested)
-                return;
-            
-            await pdfTask;
-#else
             await Task.WhenAll(fileTask, pdfTask);
             saveFile = fileTask.Result;
-#endif
         }
         catch (Exception ex)
         {
-            await ShowExceptionDialogAsync(element.XamlRoot, "PDF Generation / Save Error", ex);
+            throw;
             return;
         }
 
@@ -177,7 +153,7 @@ public static class WebViewExtensions
         }
         catch (Exception e)
         {
-            await ShowExceptionDialogAsync(element.XamlRoot, "File Save Error", e);
+            await ShowExceptionDialogAsync(element.XamlRoot, "File Save", e);
         }
     }
     
@@ -194,18 +170,8 @@ public static class WebViewExtensions
             cancellationToken: token);
 
         async Task<(byte[]?, string)> MakePdfFunction(WebView2 webView, CancellationToken localToken)
-        {
-            try
-            {
-                var result = await webView.GeneratePdfAsync(options, localToken);
-                return result;
-            }
-            catch (Exception e)
-            {
-                Debug.WriteLine(e);
-                return (null, e.ToString());
-            }
-        }
+            => await webView.GeneratePdfAsync(options, localToken);
+        
     }
 
     public static async Task<(byte[]? pdf, string error)> GeneratePdfAsync(this WebView2 webView2, PdfOptions? options = null, CancellationToken token = default)
@@ -300,12 +266,12 @@ public static class WebViewExtensions
             Directory.CreateDirectory("/cache");
 #endif
         
-        return await picker.PickSaveFileAsync();
-        
+        return await picker.PickSaveFileAsync() ??  throw new TaskCanceledException();
+
     }
 
     internal static Task ShowExceptionDialogAsync(XamlRoot xamlRoot, string title, Exception e)
-        => ShowErrorDialogAsync(xamlRoot, title, e.ToString());
+        => ShowErrorDialogAsync(xamlRoot, title, e is TaskCanceledException ? "Task Cancelled" : e.ToString());
     internal static async Task ShowErrorDialogAsync(XamlRoot xamlRoot, string title, string? error)
     {
         ContentDialog cd = new ()
@@ -561,14 +527,13 @@ internal class BusyDialog
             VerticalContentAlignment = VerticalAlignment.Center,
         };
 
+        _contentDialog.Loaded += OnLoaded;
 
         if (!hasCancelButton)
             return;
 
         _contentDialog.CloseButtonText = "CANCEL";
         _contentDialog.CloseButtonCommand = new RelayCommand((_) => uiCancellationTokenSource.Cancel());
-
-        _contentDialog.Loaded += OnLoaded;
     }
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
@@ -578,8 +543,12 @@ internal class BusyDialog
             await _function(_cancellationToken);
             _contentDialog.Content = "COMPLETED";
             _contentDialog.CloseButtonText = "OK";
-            await Task.Delay(3000, _cancellationToken);
-            _tcs.SetResult(true);
+            _tcs.TrySetResult(true);
+        }
+        catch (TaskCanceledException tce)
+        {
+            _contentDialog.Content = "CANCELLED";
+            _tcs.TrySetException(tce);
         }
         catch (Exception ex)
         {
@@ -592,10 +561,12 @@ internal class BusyDialog
                         .TextWrapping(TextWrapping.WrapWholeWords)
                         .MaxLines(1000)
                 );
-            _contentDialog.CloseButtonText = "OK";
+            _tcs.TrySetException(ex);
         }
         finally
         {
+            _contentDialog.CloseButtonText = "OK";
+            await Task.Delay(3000, _cancellationToken);
             _contentDialog.Hide();
             _contentDialog.Loaded -= OnLoaded;
         }
@@ -671,7 +642,6 @@ internal class AuxiliaryWebViewAsyncProcessor<T>
             Margin = new Thickness(0),
             Padding = new Thickness(0),
             Content = new Grid()
-                .RowDefinitions("*, Auto")
                 .Children
                 (
                     new WebView2()
@@ -688,16 +658,7 @@ internal class AuxiliaryWebViewAsyncProcessor<T>
                 
                     new ProgressRing()
                         .Name(out _progressRing)
-                        .IsActive(true),
-
-                    new Button()
-                        .Grid(row:1)
-                        .Margin(5)
-                        .Name(out var cancelButton)
-                        .Content("CANCEL")
-                        .HorizontalAlignment(HorizontalAlignment.Center)
-                        .VerticalAlignment(VerticalAlignment.Bottom)
-                        .Visibility(hasCancelButton ? Visibility.Visible : Visibility.Collapsed)
+                        .IsActive(true)
 
                 )
         };
@@ -714,14 +675,18 @@ internal class AuxiliaryWebViewAsyncProcessor<T>
             _contentDialog.Resources["VerticalContentAlignment"] = VerticalAlignment.Stretch;
         }
 #endif
+        _webView2.Loaded += OnLoaded;
             
-        cancelButton.Click += (_, _) => uiCancellationTokenSource.Cancel(true);
+        if (!hasCancelButton)
+            return;
+
+        _contentDialog.CloseButtonText = "CANCEL";
+        _contentDialog.CloseButtonCommand = new RelayCommand((_) => uiCancellationTokenSource.Cancel());
         
     }
 
     private async Task<T> ProcessAsync()
     {
-        _webView2.Loaded += OnLoaded;
         await _contentDialog.ShowAsync();
         return await _tcs.Task;
     }
@@ -741,14 +706,32 @@ internal class AuxiliaryWebViewAsyncProcessor<T>
                 _progressRing.Visibility = Visibility.Collapsed;
 
             var result = await _function(_webView2, _cancellationToken);
-            _tcs.SetResult(result);
+            _contentDialog.Content = "COMPLETED";
+            _contentDialog.CloseButtonText = "OK";
+            _tcs.TrySetResult(result);
+        }
+        catch (TaskCanceledException tce)
+        {
+            _contentDialog.Content = "CANCELLED";
+            _tcs.TrySetException(tce);
         }
         catch (Exception ex)
         {
+            _contentDialog.Title = "Error"; // $"{_title} Error";
+            _contentDialog.Content = new ScrollViewer()
+                .Content
+                (
+                    new TextBlock()
+                        .Text(ex.ToString())
+                        .TextWrapping(TextWrapping.WrapWholeWords)
+                        .MaxLines(1000)
+                );
+            _contentDialog.CloseButtonText = "OK";
             _tcs.TrySetException(ex);
         }
         finally
         {
+            await Task.Delay(3000, _cancellationToken);
             _contentDialog.Hide();
             _contentDialog.Loaded -= OnLoaded;
         }
