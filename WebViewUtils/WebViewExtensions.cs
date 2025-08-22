@@ -92,7 +92,7 @@ public static partial class WebViewExtensions
         if (element?.XamlRoot is null)
             throw new ArgumentNullException($"{nameof(element)}.{nameof(element.XamlRoot)}");
 
-        var fileTask = RequestStorageFileAsync("PDF", "pdf");
+        var fileTask = RequestStorageFileAsync("document", "PDF", "pdf");
         await Task.WhenAll(fileTask, pdfTask);
 
         if (fileTask.Result is not StorageFile saveFile)
@@ -211,7 +211,7 @@ public static partial class WebViewExtensions
         return (bytes, "");
     }
 
-    public static async Task<StorageFile> RequestStorageFileAsync(string type, params List<string> suffixes)
+    public static async Task<StorageFile> RequestStorageFileAsync(string suggestedName, string type, params List<string> suffixes)
     {
         var picker = new FileSavePicker
         {
@@ -231,7 +231,7 @@ public static partial class WebViewExtensions
             }
 
             if (suffixes.FirstOrDefault() is string primarySuffix)
-                picker.SuggestedFileName = $"document{primarySuffix}";
+                picker.SuggestedFileName = suggestedName;
         }
 
         picker.FileTypeChoices.Add(type, suffixes);
@@ -242,6 +242,9 @@ public static partial class WebViewExtensions
         var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(((App)App.Current).MainWindow);
         // Associate the HWND with the file picker
         WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
+#elif BROWSERWASM
+    if (!Directory.Exists("/cache"))
+        Directory.CreateDirectory("/cache");
 #endif
 
         return await picker.PickSaveFileAsync();
@@ -266,7 +269,7 @@ public static partial class WebViewExtensions
     {
         var token = cancellationToken ?? CancellationToken.None;
 
-        await webView2.AssureResourceFunctionLoadedAsync("html2pdf", "WebViewUtils.Resources.html2pdf.bundle.min.js", token);
+        await webView2.AssureResourceFunctionLoadedAsync("html2pdf", "WebViewUtils.Resources.html2pdf.bundle.js", token);
         await webView2.AssureResourceFunctionLoadedAsync("p42_makePdf", "WebViewUtils.Resources.p42_makePdf.js", token);
     }
 
@@ -278,20 +281,22 @@ public static partial class WebViewExtensions
             return;
 
         var script = await ReadResourceAsTextAsync(resourceId).WaitAsync(token);
+
         try
         {
             var result = await webView2.ExecuteScriptAsync(script).AsTask(token);
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"exception: {ex}");
-            System.Diagnostics.Debug.WriteLine($"exception: {ex}");
+            var msg = $"AssureResourceFunctionLoadedAsync({functionName}) exception: {ex}";
+            Console.WriteLine(msg);
+            Debug.WriteLine(msg);
         }
 
         if (await webView2.IsFunctionLoadedAsync(functionName).WaitAsync(token))
             return;
 
-        throw new Exception($"Failed to load JavaScript function [{functionName}]");
+        throw new Exception($"AssureResourceFunctionLoadedAsync: Failed to load JavaScript function [{functionName}]");
     }
 
     public static async Task<bool> IsFunctionLoadedAsync(this WebView2 webView2, string functionName, CancellationToken? cancellationToken = null)
