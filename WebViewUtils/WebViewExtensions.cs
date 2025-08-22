@@ -6,9 +6,9 @@ using WebViewUtils;
 using Windows.Storage.Pickers;
 using Microsoft.Web.WebView2.Core;
 
-namespace P42.Uno;
+namespace P42.Uno.HtmlExtensions;
 
-public static class WebViewExtensions
+public static partial class WebViewExtensions
 {
 
     /// <summary>
@@ -27,22 +27,7 @@ public static class WebViewExtensions
         try
         {
             await webView2.WaitForDocumentLoadedAsync(token);
-#if __ANDROID__
-            if (typeof(CoreWebView2).GetField("_nativeWebView", BindingFlags.Instance | BindingFlags.NonPublic) is not {} nativeWebViewField)
-                throw new Exception("Unable to obtain _nativeWebView field information");
-            var nativeWebView = nativeWebViewField.GetValue(webView2.CoreWebView2);
-            if (nativeWebView is null)
-                throw new Exception("Unable to obtain native webview");
-            
-            var type = nativeWebView.GetType();
-            if (type.GetProperty("WebView", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)
-                    ?.GetValue(nativeWebView) is not Android.Webkit.WebView droidWebView)
-                throw new Exception("Unable to obtain native webview");
-            
-            await droidWebView.PrintAsync(cancellationToken: token);
-#else
             await webView2.ExecuteScriptAsync("print();").AsTask(token);
-#endif
         }
         catch (Exception ex)
         {
@@ -89,11 +74,19 @@ public static class WebViewExtensions
         if (element.XamlRoot is null)
             throw new ArgumentNullException($"{nameof(element)}.{nameof(element.XamlRoot)}");
 
-        var fileTask = RequestStorageFileAsync("PDF", "pdf");
+        var fileTask = RequestStorageFileAsync("document", "PDF", "pdf");
+#if BROWSERWASM
+        await fileTask; 
+#else
         await Task.WhenAll(fileTask, pdfTask);
+#endif
 
         if (fileTask.Result is not { } saveFile)
             return;
+        
+#if BROWSERWASM
+        await pdfTask;
+#endif
 
         if (!string.IsNullOrWhiteSpace(pdfTask.Result.error)
             || pdfTask.Result.pdf is null 
@@ -134,8 +127,11 @@ public static class WebViewExtensions
 
     public static async Task<(byte[]? pdf, string error)> GeneratePdfAsync(this WebView2 webView2, PdfOptions? options = null, CancellationToken token = default)
     {
+        Console.WriteLine($"GeneratePdfAsync: ENTER {options}");
         await webView2.WaitForDocumentLoadedAsync(token);
+        Console.WriteLine($"GeneratePdfAsync: A");
         await webView2.AssurePdfScriptsAsync(token);
+        Console.WriteLine($"GeneratePdfAsync: B");
 
         var result = string.Empty;
         var error = string.Empty;
@@ -145,21 +141,32 @@ public static class WebViewExtensions
             ? ""
             : JsonSerializer.Serialize(options, PdfOptionsSourceGenerationContext.Default.PdfOptions).Trim('"');
 
-        await webView2.ExecuteScriptAsync($"p42_makePdf({jsonOptions})").AsTask(token);
+        Console.WriteLine($"GeneratePdfAsync: START {jsonOptions}");
+        try
+        {
+            await webView2.ExecuteScriptAsync($"p42_makePdf({jsonOptions})").AsTask(token);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"GeneratePdfAsync: START ERROR: {ex.Message}");
+            return (null, ex.ToString());
+        }
+
+        Console.WriteLine($"GeneratePdfAsync: WAITING");
         while (string.IsNullOrWhiteSpace(result) && string.IsNullOrWhiteSpace(error))
         {
-            error = await webView2.CoreWebView2.ExecuteScriptAsync("window.p42_makeP42_error").AsTask(token) ?? "";
+            error = (await webView2.CoreWebView2.ExecuteScriptAsync("window.p42_makeP42_error").AsTask(token)) ?? "";
             //Debug.WriteLine($"error:[{error}]");
-            //Console.WriteLine($"error:[{error}]");
+            Console.WriteLine($"error:[{error}]");
             error = error.Trim('"').Trim('"');
             if (error == "null")
                 error = string.Empty;
             if (!string.IsNullOrEmpty(error))
                 return (null, error);
 
-            result = await webView2.CoreWebView2.ExecuteScriptAsync("window.p42_makePdf_result").AsTask(token) ?? "";
+            result = (await webView2.CoreWebView2.ExecuteScriptAsync("window.p42_makePdf_result").AsTask(token)) ?? "";
             result = result.Trim('"').Trim('"');
-            //Console.WriteLine($"result: [{result}]");
+            Console.WriteLine($"result: [{result}]");
             if (result == "null")
                 result = string.Empty;
             else if (!string.IsNullOrEmpty(result))
@@ -167,12 +174,21 @@ public static class WebViewExtensions
 
             await Task.Delay(500, token);
         }
+        Console.WriteLine($"GeneratePdfAsync: COMPLETED");
 
-        var bytes = Convert.FromBase64String(result);
-        return (bytes, "");
+        try
+        {
+            var bytes = Convert.FromBase64String(result);
+            return (bytes, "");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"GeneratePdfAsync: COMPLETED ERROR: {ex.Message}");
+            return (null, ex.ToString());
+        }
     }
 
-    public static async Task<StorageFile?> RequestStorageFileAsync(string type, params List<string> suffixes)
+    public static async Task<StorageFile?> RequestStorageFileAsync(string suggestedName, string type, params List<string> suffixes)
     {
         var picker = new FileSavePicker
         {
@@ -192,7 +208,7 @@ public static class WebViewExtensions
             }
 
             if (suffixes.FirstOrDefault() is { } primarySuffix)
-                picker.SuggestedFileName = $"document{primarySuffix}";
+                picker.SuggestedFileName = suggestedName;
         }
 
         picker.FileTypeChoices.Add(type, suffixes);
@@ -203,7 +219,27 @@ public static class WebViewExtensions
         WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
 #endif
 
-        return await picker.PickSaveFileAsync();
+        try
+        {
+#if BROWSERWASM
+            if (!Directory.Exists("/cache"))
+                Directory.CreateDirectory("/cache");
+#endif
+            
+            return await picker.PickSaveFileAsync();
+        }
+        catch (Exception ex)
+        {
+            var cd = new ContentDialog
+            {
+                Title = "File Error",
+                Content = ex.Message,
+                PrimaryButtonText = "OK",
+            };
+            await cd.ShowAsync();
+        }
+        
+        return null;
     }
 
     private static async Task WaitForVariableValue(this WebView2 webView2, string variable, string value, CancellationToken token = default)
@@ -221,28 +257,53 @@ public static class WebViewExtensions
 
     private static async Task AssurePdfScriptsAsync(this WebView2 webView2, CancellationToken token = default)
     {
+        Console.WriteLine("AssurePdfScriptsAsync ENTER");
         await webView2.AssureResourceFunctionLoadedAsync("html2pdf", "WebViewUtils.Resources.html2pdf.bundle.min.js", token);
+        Console.WriteLine("AssurePdfScriptsAsync A");
         await webView2.AssureResourceFunctionLoadedAsync("p42_makePdf", "WebViewUtils.Resources.p42_makePdf.js", token);
+        Console.WriteLine("AssurePdfScriptsAsync EXIT");
     }
 
     private static async Task AssureResourceFunctionLoadedAsync(this WebView2 webView2, string functionName, string resourceId, CancellationToken token = default)
     {
+        Console.WriteLine($"AssureResourceFunctionLoadedAsync ENTER : [{functionName}] {resourceId}]");
         if (await webView2.IsFunctionLoadedAsync(functionName, token))
+        {
+            Console.WriteLine($"AssureResourceFunctionLoadedAsync EXIT (Already loaded) : [{functionName}] {resourceId}]");
             return;
+        }
 
+        Console.WriteLine($"AssureResourceFunctionLoadedAsync A : [{functionName}] {resourceId}]");
         var script = await ReadResourceAsTextAsync(resourceId).WaitAsync(token);
+
+        var saveFile = await RequestStorageFileAsync("html2pdfScript", "js", ["js"]);
+        CachedFileManager.DeferUpdates(saveFile);
+        await FileIO.WriteTextAsync(saveFile, script);
+        await CachedFileManager.CompleteUpdatesAsync(saveFile);
+
+        
+        Console.WriteLine($"AssureResourceFunctionLoadedAsync B : [{functionName}] {resourceId}]");
+        Console.WriteLine($"AssureResourceFunctionLoadedAsync B : script [{script}]");
         await webView2.ExecuteScriptAsync(script).AsTask(token);
+        Console.WriteLine($"AssureResourceFunctionLoadedAsync C : [{functionName}] {resourceId}]");
 
         if (await webView2.IsFunctionLoadedAsync(functionName, token))
+        {
+            Console.WriteLine($"AssureResourceFunctionLoadedAsync EXIT (fresh load) : [{functionName}] {resourceId}]");
             return;
+        }
 
+        Console.WriteLine($"AssureResourceFunctionLoadedAsync FAIL : [{functionName}] {resourceId}]");
         throw new Exception($"Failed to load JavaScript function [{functionName}]");
     }
 
     public static async Task<bool> IsFunctionLoadedAsync(this WebView2 webView2, string functionName, CancellationToken token = default)
     {
+        Console.WriteLine($"IsFunctionLoaded: ENTER : [{functionName}]");
         var type = await webView2.ExecuteScriptAsync($"typeof {functionName};").AsTask(token);
+        Console.WriteLine($"IsFunctionLoaded: A {type}  [{functionName}]");
         type = type?.Trim('"').Trim('"');
+        Console.WriteLine($"IsFunctionLoaded: EXIT {type} [{functionName}]");
         return type?.Contains("function") ?? false;
     }
 
@@ -252,9 +313,20 @@ public static class WebViewExtensions
         using var reader = new StreamReader(stream);
         return await reader.ReadToEndAsync();
     }
-    
-    private record TryResult<T>(bool IsSuccess, T? Value = default);
-    
+
+    private record TryResult<T>
+    {
+        public bool IsSuccess { get; set; }
+        
+        public T? Value { get; set; }
+
+        public TryResult(bool isSuccess, T? value = default)
+        {
+            IsSuccess = isSuccess;
+            Value = value;
+        }
+    }
+
     private static async Task<TryResult<int>> TryExecuteIntScriptAsync(this WebView2 webView2, string script)
     {
         try
@@ -546,10 +618,15 @@ internal record AuxiliaryWebViewAsyncProcessor<T> : BaseAuxiliaryWebView
 
     public async Task<T> ProcessAsync(Func<WebView2, CancellationToken, Task<T>> function)
     {
+        Console.WriteLine($"ProcessAsync<T>: ENTER");
         ArgumentNullException.ThrowIfNull(function);
+        Console.WriteLine($"ProcessAsync<T>: A");
         _function = function;
+        Console.WriteLine($"ProcessAsync<T>: B");
         ContentDialog.Loaded += OnLoaded;
+        Console.WriteLine($"ProcessAsync<T>: C");
         await ShowAsync();
+        Console.WriteLine($"ProcessAsync<T>: EXIT");
         return await TaskCompletionSource.Task;
     }
 
@@ -557,26 +634,39 @@ internal record AuxiliaryWebViewAsyncProcessor<T> : BaseAuxiliaryWebView
     {
         try
         {
+            Console.WriteLine($"OnLoaded<T>: TRY ENTER");
             if (_function is null)
                 throw new ArgumentNullException(nameof(_function));
+            Console.WriteLine($"OnLoaded<T>: A");
             await WebView2.EnsureCoreWebView2Async().AsTask(CancellationTokenSource.Token);
 
+            Console.WriteLine($"OnLoaded<T>: B");
             WebView2.CoreWebView2.NavigateToString(Html);
+            Console.WriteLine($"OnLoaded<T>: C");
             await WebView2.WaitForDocumentLoadedAsync();
+            Console.WriteLine($"OnLoaded<T>: D");
             if (!HideContent)
                 ProgressRing.Visibility = Visibility.Collapsed;
 
+            Console.WriteLine($"OnLoaded<T>: E");
             var result = await _function(WebView2, CancellationTokenSource.Token);
+            Console.WriteLine($"OnLoaded<T>: F");
             TaskCompletionSource.SetResult(result);
+            Console.WriteLine($"OnLoaded<T>: TRY EXIT");
         }
         catch (Exception ex)
         {
+            Console.WriteLine($"OnLoaded<T>: EXCEPTION ENTER");
             TaskCompletionSource.TrySetException(ex);
+            Console.WriteLine($"OnLoaded<T>: EXCEPTION EXIT : [{ex}]");
         }
         finally
         {
+            Console.WriteLine($"OnLoaded<T>: FINALLY ENTER");
             ContentDialog.Hide();
+            Console.WriteLine($"OnLoaded<T>: FINALLY A");
             ContentDialog.Loaded -= OnLoaded;
+            Console.WriteLine($"OnLoaded<T>: FINALLY EXIT");
         }
     }
 
