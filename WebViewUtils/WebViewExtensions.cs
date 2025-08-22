@@ -303,7 +303,7 @@ public static class WebViewExtensions
 
     private static async Task AssurePdfScriptsAsync(this WebView2 webView2, CancellationToken token = default)
     {
-        await webView2.AssureResourceFunctionLoadedAsync("html2pdf", "WebViewUtils.Resources.html2pdf.bundle.min.js", token);
+        await webView2.AssureResourceFunctionLoadedAsync("html2pdf", "WebViewUtils.Resources.html2pdf.bundle.js", token);
         await webView2.AssureResourceFunctionLoadedAsync("p42_makePdf", "WebViewUtils.Resources.p42_makePdf.js", token);
     }
 
