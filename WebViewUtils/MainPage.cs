@@ -105,6 +105,47 @@ public sealed partial class MainPage : Page
     async void OnHtmlPdfButtonClick(object sender, RoutedEventArgs e)
     {
         var html = await WebViewExtensions.ReadResourceAsTextAsync("WebViewUtils.Resources.Html5TestPage.html");
+
+        /*
+#if BROWSERWASM
+        var picker = new FileSavePicker
+        {
+            SuggestedStartLocation = PickerLocationId.Downloads,
+            SuggestedFileName = "document"
+        };
+
+        picker.FileTypeChoices.Add("PDF",new List<string>() { ".pdf" });
+        var saveFile = await picker.PickSaveFileAsync();
+        
+        if (saveFile is null)
+            return;
+        
+        var result = await WebViewExtensions.GeneratePdfAsync(this, html);
+        if (result.pdf is null || result.pdf.Length == 0)
+        {
+            var cd = new ContentDialog()
+            {
+                XamlRoot =XamlRoot,
+                Title = "PDF Generation Error",
+                Content = string.IsNullOrWhiteSpace(result.error) ? "Unknown failure" : result.error,
+                PrimaryButtonText = "OK",
+            };
+            await cd.ShowAsync();
+            return;
+        }
+
+        CachedFileManager.DeferUpdates(saveFile);
+
+        // Save file was picked, you can now write in it
+        await FileIO.WriteBytesAsync(saveFile, result.pdf);
+
+        await CachedFileManager.CompleteUpdatesAsync(saveFile);
+
+        return;
+#endif
+*/
+
+        
         await WebViewExtensions.SavePdfAsync(this, html);
     }
 
@@ -360,29 +401,6 @@ public sealed partial class MainPage : Page
         if (args.TryGetWebMessageAsString() is  string text && !string.IsNullOrWhiteSpace(text)) 
             _webView.CoreWebView2.NavigateToString(text);
     }
-    /*
-    static int iterations;
-    async void OnTmpWebViewNavigationCompleted(WebView2 sender, CoreWebView2NavigationCompletedEventArgs args)
-    {
-        var iteration = iterations++;
-
-        var html = await sender.ExecuteScriptAsync("document.documentElement.outerHTML;");
-        var size = await sender.WebViewContentSizeAsync();
-
-        Console.WriteLine($"OnTmpWebViewNavigationCompleted[{iteration}] ENTER : [{sender}] [{sender.Source}] [{args.NavigationId}] [{args.HttpStatusCode}] [{args.IsSuccess}] [{args.WebErrorStatus}]  :  [{size}]  [{html}]");
-
-        if (size.Width < 1 || size.Height < 1)
-            return;
-
-
-        await tmpWebView.ExecuteScriptAsync("window.print();");
-        Console.WriteLine($"OnTmpWebViewNavigationCompleted[{iteration}] A");
-        tmpWebView.NavigationCompleted -= OnTmpWebViewNavigationCompleted;
-        Console.WriteLine($"OnTmpWebViewNavigationCompleted[{iteration}] B");
-        this.Content = (UIElement)tmpContent;
-        Console.WriteLine($"OnTmpWebViewNavigationCompleted[{iteration}] EXIT");
-    }
-    */
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
