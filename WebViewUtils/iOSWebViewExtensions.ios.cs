@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
 using Windows.Foundation;
 using Windows.Storage.Pickers;
+using Windows.System;
 using Foundation;
 using UIKit;
 using WebKit;
@@ -52,8 +53,13 @@ public static class IosWebViewExtensions
 
 public partial class CustomFileSavePicker(XamlRoot xamlRoot) : FileSavePicker
 {
+    ContentDialog contentDialog;
+    private bool enterPressed;
+    
     public new async Task<StorageFile?> PickSaveFileAsync()
     {
+        enterPressed = false;
+        
         var folderPicker = new FolderPicker()
         {
             SuggestedStartLocation = SuggestedStartLocation,
@@ -67,14 +73,14 @@ public partial class CustomFileSavePicker(XamlRoot xamlRoot) : FileSavePicker
         {
             HorizontalAlignment = HorizontalAlignment.Stretch,
             HorizontalTextAlignment = TextAlignment.Right,
-            AcceptsReturn = false,
+            VerticalAlignment = VerticalAlignment.Center,
+            AcceptsReturn = true,
             IsSpellCheckEnabled = true,
-            PlaceholderText = SuggestedFileName
+            PlaceholderText = SuggestedFileName,
         };
 
         textBox.BeforeTextChanging += OnFileNameBeforeTextChanging;
-        
-        ContentDialog cd = new ContentDialog
+        contentDialog = new ContentDialog
         {
             Title = $"File name to be saved in {storageFolder.DisplayName}",
             Content = textBox,
@@ -86,33 +92,49 @@ public partial class CustomFileSavePicker(XamlRoot xamlRoot) : FileSavePicker
             XamlRoot = xamlRoot
         };
 
+
+
         var tcs = new TaskCompletionSource<ContentDialogResult>();
         
-        cd.DispatcherQueue.TryEnqueue(async() =>
+        contentDialog.DispatcherQueue.TryEnqueue(async() =>
         {
-            var result = await cd.ShowAsync();    
+            var result = await contentDialog.ShowAsync();    
             tcs.TrySetResult(result);
         });
 
-        var result = await tcs.Task;
-
-        if (result != ContentDialogResult.Primary)
+        if ( await tcs.Task != ContentDialogResult.Primary && !enterPressed)
             return null;
 
-        if (!string.IsNullOrWhiteSpace(textBox.Text))
-            return await storageFolder.CreateFileAsync(textBox.Text, CreationCollisionOption.ReplaceExisting);
-
-        if (string.IsNullOrWhiteSpace(SuggestedFileName))
+        var fileName = textBox.Text;
+        if (string.IsNullOrWhiteSpace(fileName))
             return null;
         
-        return await storageFolder.CreateFileAsync(SuggestedFileName, CreationCollisionOption.GenerateUniqueName);
-
+        if (string.IsNullOrWhiteSpace(System.IO.Path.GetExtension(fileName)) 
+            && FileTypeChoices.FirstOrDefault() is KeyValuePair<string, IList<string>> defaultFileType 
+            && defaultFileType.Value is IList<string> extensions 
+            && extensions.FirstOrDefault() is string defaultExtension 
+            && !string.IsNullOrWhiteSpace(defaultExtension))
+            fileName += defaultExtension;
+        
+            return await storageFolder.CreateFileAsync(fileName, CreationCollisionOption.ReplaceExisting);
+            
     }
     
-    private static void OnFileNameBeforeTextChanging(TextBox sender, TextBoxBeforeTextChangingEventArgs args)
+    private void OnFileNameBeforeTextChanging(TextBox sender, TextBoxBeforeTextChangingEventArgs args)
     {
         if (args.NewText is not { } newText || string.IsNullOrWhiteSpace(newText))
             return;
+
+        if (newText.Contains('\n'))
+        {
+            enterPressed = true;
+            args.Cancel = true;
+            contentDialog.Hide();
+        }
+        else
+        {
+            enterPressed = false;
+        }
         
         var hasSpecial = MyRegex().IsMatch(args.NewText);
         
