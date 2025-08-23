@@ -47,7 +47,7 @@
 
     <BuildInParallel>false</BuildInParallel>
       <AllowUnsafeBlocks Condition="  $(TargetFramework.Contains('wasm'))  ">true</AllowUnsafeBlocks>
-
+      <DefineConstants Condition=" $([System.OperatingSystem]::IsMacOS()) AND $(TargetFramework.Contains('desktop'))" >__DESKTOP_MACOS__;$(DefineConstants)</DefineConstants>
 
   </PropertyGroup>
   <ItemGroup>

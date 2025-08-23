@@ -51,6 +51,47 @@ public static class WebViewExtensions
                 throw new Exception("Unable to obtain native webview");
 
             var result = await wkWebView.PrintAsync();
+#elif __DESKTOP_MACOS__
+
+            var nativeWebViewWrapper = webView2.GetNativeWebViewWrapper();
+            var type = nativeWebViewWrapper.GetType();
+
+            System.Diagnostics.Debug.WriteLine($"type:[{type}]");
+            
+            Debug.WriteLine("PROPERTIES:");
+            var properties = type.GetProperties(BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+            foreach (var property in properties)
+            {
+                try
+                {
+                    Debug.WriteLine($"MacOSNativeWebView.{property.Name} = {property.GetValue(nativeWebViewWrapper)}");
+                }
+                catch (Exception e)
+                {
+                    Debug.WriteLine($"MacOSNativeWebView.{property.Name} = {e.Message}");
+                }
+            }
+
+            Debug.WriteLine("FIELDS:");
+            var fields = type.GetFields(BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+            foreach (var field in fields)
+            {
+                try
+                {
+                    Debug.WriteLine($"MacOSNativeWebView.{field.Name} = {field.GetValue(nativeWebViewWrapper)}");
+                }
+                catch (Exception e)
+                {
+                    Debug.WriteLine($"MacOSNativeWebView.{field.Name} = {e.Message}");
+                }
+            }
+            
+            if (type.GetField("_webview", BindingFlags.Instance | BindingFlags.NonPublic) is not {} nativeWebView)
+                throw new Exception("Unable to obtain native webview");
+                
+            var methodInfo = nativeWebView.GetType().GetProperty("PrintAsync", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+            
+            Debug.WriteLine($"mathodInfo:[{methodInfo}]");
 #else
             await webView2.ExecuteScriptAsync("print();").AsTask(token);
 
