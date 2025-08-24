@@ -1,25 +1,18 @@
-using System.Diagnostics;
-using System.Reflection;
-using System.Runtime.InteropServices.JavaScript;
-using System.Text;
-using HtmlAgilityPack;
 using Microsoft.Web.WebView2.Core;
 using P42.Uno;
-using Windows.Storage.Pickers;
-using Microsoft.UI.Dispatching;
 
-#if __IOS__
-using Foundation;
+#if BROWSERWASM
+using System.Runtime.InteropServices.JavaScript;
 #endif
+
 namespace WebViewUtils;
 
 public sealed partial class MainPage : Page
 {
-    WebView2 _webView;
-    public static DispatcherQueue MainThreadDispatchQueue { get; private set; }
-
+    private readonly WebView2 _webView;
     public MainPage()
     {
+
         this
             .Background(ThemeResource.Get<Brush>("ApplicationPageBackgroundThemeBrush"))
             .VerticalAlignment(VerticalAlignment.Stretch)
@@ -82,7 +75,6 @@ public sealed partial class MainPage : Page
 
         Loaded += OnLoaded;
 
-        MainThreadDispatchQueue = DispatcherQueue.GetForCurrentThread();
     }
 
     private async void OnWebViewPrintButtonClick(object sender, RoutedEventArgs e)
@@ -94,7 +86,7 @@ public sealed partial class MainPage : Page
         }
         catch (Exception ex)
         {
-            await WebViewExtensions.ShowExceptionDialogAsync(XamlRoot, "WebView Print", ex);
+            await DialogExtensions.ShowExceptionDialogAsync(XamlRoot!, "WebView Print", ex);
         }
     }
 
@@ -104,11 +96,11 @@ public sealed partial class MainPage : Page
         try
         {
             var html = await WebViewExtensions.ReadResourceAsTextAsync("WebViewUtils.Resources.Html5TestPage.html");
-            await WebViewExtensions.PrintAsync(this, html);
+            await HtmlExtensions.PrintAsync(this, html);
         }
         catch (Exception ex)
         {
-            await WebViewExtensions.ShowExceptionDialogAsync(XamlRoot, "Html Print", ex);
+            await DialogExtensions.ShowExceptionDialogAsync(XamlRoot!, "Html Print", ex);
         }
     }
 
@@ -123,28 +115,30 @@ public sealed partial class MainPage : Page
         }
         catch (Exception ex)
         {
-            await WebViewExtensions.ShowExceptionDialogAsync(XamlRoot, "WebView PDF", ex);
+            await DialogExtensions.ShowExceptionDialogAsync(XamlRoot!, "WebView PDF", ex);
         }
         // options is broken in WASM
     }
 
-    async void OnHtmlPdfButtonClick(object sender, RoutedEventArgs e)
+    private async void OnHtmlPdfButtonClick(object sender, RoutedEventArgs e)
     {
         try
         {
             var html = await WebViewExtensions.ReadResourceAsTextAsync("WebViewUtils.Resources.Html5TestPage.html");
-            await WebViewExtensions.SavePdfAsync(this, html);
+            await HtmlExtensions.SavePdfAsync(this, html);
         }
         catch (Exception ex)
         {
-            await WebViewExtensions.ShowExceptionDialogAsync(XamlRoot, "Html PDF", ex);
+            await DialogExtensions.ShowExceptionDialogAsync(XamlRoot!, "Html PDF", ex);
         }
     }
 
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
-        await _webView.EnsureCoreWebView2Async();
+        try
+        {
+            await _webView.EnsureCoreWebView2Async();
 
 
 #if BROWSERWASM
@@ -154,37 +148,21 @@ public sealed partial class MainPage : Page
         System.Diagnostics.Debug.WriteLine(msg);
         _webView.CoreWebView2.Navigate(page);
         return;
+#else
+            _webView.CoreWebView2.SetVirtualHostNameToFolderMapping
+            (
+                "WebContent",
+                "WebContent",
+                CoreWebView2HostResourceAccessKind.Allow
+            );
+
+            _webView.CoreWebView2.Navigate("http://WebContent/CltInstall.html");
 #endif
-
-        _webView.CoreWebView2.SetVirtualHostNameToFolderMapping
-        (
-            "WebContent",
-            "WebContent",
-            CoreWebView2HostResourceAccessKind.Allow
-        );
-
-        _webView.CoreWebView2.Navigate("http://WebContent/CltInstall.html");
-        
-        //var html = await WebViewExtensions.ReadResourceAsTextAsync("WebViewUtils.Resources.Html5TestPage.html");
-        //_webView.CoreWebView2.NavigateToString(html);
-        
-#if __IOS__
-        
-        var bundlePath = NSBundle.MainBundle.BundlePath;
-        var files = NSFileManager.DefaultManager.GetDirectoryContentRecursive(bundlePath, out var error);
-        if (error != null)
-        {
-            System.Diagnostics.Debug.WriteLine(error);
-            Console.WriteLine(error);
-        }        
-        else
-        {
-            foreach (var file in files)
-            {
-                System.Diagnostics.Debug.WriteLine($" - {file}");
-            }
         }
-#endif
+        catch (Exception ex)
+        {
+            await DialogExtensions.ShowExceptionDialogAsync(XamlRoot!, "WebView", ex);
+        }
     }
 
 #if BROWSERWASM

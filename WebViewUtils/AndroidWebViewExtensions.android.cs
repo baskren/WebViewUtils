@@ -40,8 +40,8 @@ internal static class AndroidWebViewExtensions
         using JavaScriptEvaluator evaluator = new (webView, script);
         return await evaluator.TaskCompletionSource.Task;
     }
-        
-    static Android.App.Activity? Activity => ContextHelper.Current as Android.App.Activity;
+
+    private static Android.App.Activity? Activity => ContextHelper.Current as Android.App.Activity;
 
     
     public static async Task PrintAsync(this Android.Webkit.WebView droidWebView, string jobName = "", CancellationToken cancellationToken = default)
@@ -97,7 +97,7 @@ internal class JavaScriptEvaluator : Java.Lang.Object, Android.Webkit.IValueCall
 
 internal static class Display
 {
-    static Android.App.Activity? Activity => ContextHelper.Current as Android.App.Activity;
+    private static Android.App.Activity? Activity => ContextHelper.Current as Android.App.Activity;
 
     public static double Scale
     {
