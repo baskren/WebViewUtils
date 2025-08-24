@@ -7,7 +7,7 @@ using Microsoft.Web.WebView2.Core;
 
 namespace P42.Uno;
 
-public static class WebViewExtensions
+public static class WebView2Extensions
 {
 
     /// <summary>
@@ -268,7 +268,7 @@ public static class WebViewExtensions
     // gets text from embedded resource
     public static async Task<string> ReadResourceAsTextAsync(string resourceId)
     {
-        await using var stream = typeof(WebViewExtensions).Assembly.GetManifestResourceStream(resourceId) ?? throw new InvalidOperationException("Resource not found");
+        await using var stream = typeof(WebView2Extensions).Assembly.GetManifestResourceStream(resourceId) ?? throw new InvalidOperationException("Resource not found");
         using var reader = new StreamReader(stream);
         return await reader.ReadToEndAsync();
     }

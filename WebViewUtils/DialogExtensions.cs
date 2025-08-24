@@ -179,7 +179,7 @@ public static class DialogExtensions
         private readonly TaskCompletionSource<T> _tcs = new();
         private readonly CancellationToken _cancellationToken;
 
-        private readonly Func<WebView2, CancellationToken, Task<T>> _function;
+        private readonly Func<WebView2, CancellationToken, Task<T>> _onContentLoadedTask;
         private readonly Func<WebView2, CancellationToken, Task> _loadContentAction;
         
         private readonly ContentDialog _contentDialog;
@@ -187,20 +187,22 @@ public static class DialogExtensions
         private readonly ProgressRing _progressRing;
 
         private readonly bool _showWebContent;
+        private readonly bool _hideAfterOnLoadedTaskComplete;
         #endregion
 
         public static async Task<T> Create(
             XamlRoot xamlRoot, 
             string html,
-            Func<WebView2, CancellationToken, Task<T>> onLoadedFunction, 
+            Func<WebView2, CancellationToken, Task<T>> onContentLoadedTask, 
             bool showWebContent = false,
             bool hasCancelButton = true,
+            bool hideAfterOnContentLoadedTaskComplete = false,
             CancellationToken cancellationToken = default)
         {
             if (string.IsNullOrWhiteSpace(html))
                 throw new ArgumentNullException(nameof(html));
             
-            var processor = new AuxiliaryWebViewAsyncProcessor<T>(xamlRoot, LoadHtml, onLoadedFunction, showWebContent, hasCancelButton, cancellationToken);
+            var processor = new AuxiliaryWebViewAsyncProcessor<T>(xamlRoot, LoadHtml, onContentLoadedTask, showWebContent, hasCancelButton, hideAfterOnContentLoadedTaskComplete, cancellationToken);
             return await processor.ProcessAsync();
             
             Task LoadHtml(WebView2 webView, CancellationToken localToken)
@@ -211,18 +213,26 @@ public static class DialogExtensions
 
         }
 
-        private AuxiliaryWebViewAsyncProcessor(XamlRoot xamlRoot, Func<WebView2, CancellationToken, Task> loadContentAction, Func<WebView2, CancellationToken, Task<T>> contentLoadedFunction, bool showWebContent, bool hasCancelButton, CancellationToken cancellationToken) 
+        private AuxiliaryWebViewAsyncProcessor(
+            XamlRoot xamlRoot, 
+            Func<WebView2, CancellationToken, Task> loadContentAction, 
+            Func<WebView2, CancellationToken, Task<T>> onContentLoadedTask, 
+            bool showWebContent, 
+            bool hasCancelButton, 
+            bool hideAfterOnContentLoadedTaskComplete,
+            CancellationToken cancellationToken) 
         {
             ArgumentNullException.ThrowIfNull(xamlRoot);
             ArgumentNullException.ThrowIfNull(loadContentAction);
-            ArgumentNullException.ThrowIfNull(contentLoadedFunction);
+            ArgumentNullException.ThrowIfNull(onContentLoadedTask);
 
             CancellationTokenSource uiCancellationTokenSource = new ();
             _cancellationToken = CancellationTokenSource.CreateLinkedTokenSource(uiCancellationTokenSource.Token, cancellationToken).Token;
 
             _loadContentAction = loadContentAction;
-            _function = contentLoadedFunction;
+            _onContentLoadedTask = onContentLoadedTask;
             _showWebContent = showWebContent;
+            _hideAfterOnLoadedTaskComplete = hideAfterOnContentLoadedTaskComplete;
 
             _contentDialog = new ContentDialog
             {            
@@ -295,7 +305,10 @@ public static class DialogExtensions
                 if (_showWebContent)
                     _progressRing.Visibility = Visibility.Collapsed;
 
-                var result = await _function(_webView2, _cancellationToken);
+                var result = await _onContentLoadedTask(_webView2, _cancellationToken);
+                if (_hideAfterOnLoadedTaskComplete)
+                    return;
+                
                 _contentDialog.Content = "COMPLETED";
                 _contentDialog.CloseButtonText = "OK";
                 _tcs.TrySetResult(result);

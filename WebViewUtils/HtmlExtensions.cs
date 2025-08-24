@@ -9,7 +9,12 @@ public static class HtmlExtensions
         if (element.XamlRoot is null)
             throw new ArgumentNullException($"{nameof(element)}.{nameof(element.XamlRoot)}");
         
-        await DialogExtensions.AuxiliaryWebViewAsyncProcessor<bool>.Create(element.XamlRoot, html, PrintFunction, showWebContent: OperatingSystem.IsWindows(), cancellationToken:  token);
+        await DialogExtensions.AuxiliaryWebViewAsyncProcessor<bool>.Create(
+            element.XamlRoot, html, 
+            PrintFunction, 
+            showWebContent: OperatingSystem.IsWindows(), 
+            hideAfterOnContentLoadedTaskComplete: true, 
+            cancellationToken:  token);
         return;
 
         static async Task<bool> PrintFunction(WebView2 webView, CancellationToken localToken)
@@ -28,14 +33,16 @@ public static class HtmlExtensions
             ? "document"
             : options.Filename;
 
-        await DialogExtensions.AuxiliaryWebViewAsyncProcessor<bool>.Create(element.XamlRoot, html, MakePdfFunction,
+        await DialogExtensions.AuxiliaryWebViewAsyncProcessor<bool>.Create(
+            element.XamlRoot, html, 
+            MakePdfFunction,
             cancellationToken: token);
         return;
 
         async Task<bool> MakePdfFunction(WebView2 webView, CancellationToken localToken)
         {
             var pdfTask =  webView.GeneratePdfAsync(options, localToken);
-            await WebViewExtensions.InternalSavePdfAsync(element, pdfTask, fileName, localToken);
+            await WebView2Extensions.InternalSavePdfAsync(element, pdfTask, fileName, localToken);
             return true;
         }
     }

@@ -95,7 +95,7 @@ public sealed partial class MainPage : Page
     {
         try
         {
-            var html = await WebViewExtensions.ReadResourceAsTextAsync("WebViewUtils.Resources.Html5TestPage.html");
+            var html = await WebView2Extensions.ReadResourceAsTextAsync("WebViewUtils.Resources.Html5TestPage.html");
             await HtmlExtensions.PrintAsync(this, html);
         }
         catch (Exception ex)
@@ -124,7 +124,7 @@ public sealed partial class MainPage : Page
     {
         try
         {
-            var html = await WebViewExtensions.ReadResourceAsTextAsync("WebViewUtils.Resources.Html5TestPage.html");
+            var html = await WebView2Extensions.ReadResourceAsTextAsync("WebViewUtils.Resources.Html5TestPage.html");
             await HtmlExtensions.SavePdfAsync(this, html);
         }
         catch (Exception ex)
