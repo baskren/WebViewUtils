@@ -10,6 +10,14 @@ namespace P42.Uno;
 public static class WebView2Extensions
 {
 
+    public static bool CanPrint() =>
+#if __DESKTOP__
+        System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(
+            System.Runtime.InteropServices.OSPlatform.Windows);
+#else
+        true;
+#endif
+    
     /// <summary>
     /// Get content of a WebView as HTML
     /// </summary>

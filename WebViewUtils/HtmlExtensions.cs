@@ -4,6 +4,8 @@ namespace P42.Uno;
 
 public static class HtmlExtensions
 {
+    public static bool CanPrint() => WebView2Extensions.CanPrint();
+    
     public static async Task PrintAsync(UIElement element, string html, CancellationToken token = default)
     {
         if (element.XamlRoot is null)

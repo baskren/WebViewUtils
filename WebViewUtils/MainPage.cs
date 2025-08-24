@@ -53,12 +53,14 @@ public sealed partial class MainPage : Page
                                     .Name(out var htmlPrintButton)
                                     .Content("HTML PRINT")
                                     .HorizontalAlignment(HorizontalAlignment.Center)
-                                    .VerticalAlignment(VerticalAlignment.Center),
+                                    .VerticalAlignment(VerticalAlignment.Center)
+                                    .IsEnabled(HtmlExtensions.CanPrint()) ,
                                 new Button()
                                     .Name(out var webViewPrintButton)
                                     .Content("WV2 PRINT")
                                     .HorizontalAlignment(HorizontalAlignment.Center)
                                     .VerticalAlignment(VerticalAlignment.Center)
+                                    .IsEnabled(WebView2Extensions.CanPrint()) 
                             )
 
 
@@ -71,6 +73,7 @@ public sealed partial class MainPage : Page
         htmlPrintButton.Click += OnHtmlPrintButtonClick;
         webViewPrintButton.Click += OnWebViewPrintButtonClick;
 
+        
         //_webView.Source = new Uri("https://platform.uno");
 
         Loaded += OnLoaded;
